@@ -1,0 +1,248 @@
+/**
+ * Room creation, joining, and discovery RPC layer for Tic-Tac-Toe
+ */
+
+import matchHandler, { MatchLabel } from './ticTacToeMatch';
+
+// Room code generation
+const ROOM_CODE_LENGTH = 6;
+const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+function generateRoomCode(): string {
+  let code = '';
+  for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
+    code += ALPHANUMERIC[Math.floor(Math.random() * ALPHANUMERIC.length)];
+  }
+  return code;
+}
+
+// Nickname validation
+function sanitizeNickname(nickname: string): string {
+  return nickname.trim().slice(0, 20) || 'Player';
+}
+
+// Parse match label
+function parseMatchLabel(labelString: string): MatchLabel | null {
+  try {
+    return JSON.parse(labelString);
+  } catch {
+    return null;
+  }
+}
+
+// Find room by room code
+function findRoomByCode(nk: nkruntime.Nakama, roomCode: string): nkruntime.MatchList.Match | null {
+  const matches = nk.matchList(100, true, null, null, 1, null);
+  
+  for (const match of matches.matches) {
+    const label = parseMatchLabel(match.label || '{}');
+    if (label && label.roomCode === roomCode) {
+      return match;
+    }
+  }
+  
+  return null;
+}
+
+// Get joinable public waiting rooms
+function getJoinablePublicRooms(nk: nkruntime.Nakama): nkruntime.MatchList.Match[] {
+  const matches = nk.matchList(100, true, null, null, 1, null);
+  const joinableRooms: nkruntime.MatchList.Match[] = [];
+  
+  for (const match of matches.matches) {
+    const label = parseMatchLabel(match.label || '{}');
+    if (label && label.visibility === 'public' && label.open && label.phase === 'waiting_for_opponent') {
+      joinableRooms.push(match);
+    }
+  }
+  
+  return joinableRooms;
+}
+
+// RPC: Create room
+export function createRoomRpc(
+  ctx: nkruntime.Context,
+  logger: nkruntime.Logger,
+  nk: nkruntime.Nakama,
+  payload: string
+): string {
+  try {
+    const params = payload ? JSON.parse(payload) : {};
+    const nickname = sanitizeNickname(params.nickname || 'Player');
+    const isPrivate = params.isPrivate === true;
+    
+    const roomCode = generateRoomCode();
+    const visibility = isPrivate ? 'private' : 'public';
+    
+    // Create match
+    const matchId = nk.matchCreate('tic_tac_toe', {
+      roomCode,
+      visibility,
+      creatorUserId: ctx.userId,
+      creatorNickname: nickname
+    });
+    
+    return JSON.stringify({
+      success: true,
+      matchId,
+      roomCode,
+      isPrivate,
+      mode: 'classic'
+    });
+    
+  } catch (error) {
+    logger.error(`createRoomRpc error: ${error}`);
+    return JSON.stringify({
+      success: false,
+      error: 'failed_to_create_room',
+      message: 'Failed to create room'
+    });
+  }
+}
+
+// RPC: Join room by code
+export function joinRoomRpc(
+  ctx: nkruntime.Context,
+  logger: nkruntime.Logger,
+  nk: nkruntime.Nakama,
+  payload: string
+): string {
+  try {
+    const params = payload ? JSON.parse(payload) : {};
+    const roomCode = params.roomCode;
+    
+    if (!roomCode || typeof roomCode !== 'string' || roomCode.length !== ROOM_CODE_LENGTH) {
+      return JSON.stringify({
+        success: false,
+        error: 'invalid_room_code',
+        message: 'Invalid room code format'
+      });
+    }
+    
+    const match = findRoomByCode(nk, roomCode);
+    if (!match) {
+      return JSON.stringify({
+        success: false,
+        error: 'room_not_found',
+        message: 'Room not found'
+      });
+    }
+    
+    // Check if room is joinable by parsing label
+    const label = parseMatchLabel(match.label || '{}');
+    if (!label || !label.open) {
+      return JSON.stringify({
+        success: false,
+        error: 'room_not_joinable',
+        message: 'Room is not joinable'
+      });
+    }
+    
+    return JSON.stringify({
+      success: true,
+      matchId: match.matchId,
+      roomCode,
+      mode: 'classic'
+    });
+    
+  } catch (error) {
+    logger.error(`joinRoomRpc error: ${error}`);
+    return JSON.stringify({
+      success: false,
+      error: 'failed_to_join_room',
+      message: 'Failed to join room'
+    });
+  }
+}
+
+// RPC: List joinable rooms
+export function listRoomsRpc(
+  ctx: nkruntime.Context,
+  logger: nkruntime.Logger,
+  nk: nkruntime.Nakama,
+  payload: string
+): string {
+  try {
+    const joinableRooms = getJoinablePublicRooms(nk);
+    
+    const rooms = joinableRooms.map(match => {
+      const label = parseMatchLabel(match.label || '{}');
+      return {
+        matchId: match.matchId,
+        roomCode: label?.roomCode || 'UNKNOWN',
+        mode: 'classic',
+        playerCount: label?.occupancy || 0,
+        maxPlayers: 2
+      };
+    });
+    
+    return JSON.stringify({
+      success: true,
+      rooms
+    });
+    
+  } catch (error) {
+    logger.error(`listRoomsRpc error: ${error}`);
+    return JSON.stringify({
+      success: false,
+      error: 'failed_to_list_rooms',
+      message: 'Failed to list rooms',
+      rooms: []
+    });
+  }
+}
+
+// RPC: Quick play
+export function quickPlayRpc(
+  ctx: nkruntime.Context,
+  logger: nkruntime.Logger,
+  nk: nkruntime.Nakama,
+  payload: string
+): string {
+  try {
+    const params = payload ? JSON.parse(payload) : {};
+    const nickname = sanitizeNickname(params.nickname || 'Player');
+    
+    // Look for existing joinable public room
+    const joinableRooms = getJoinablePublicRooms(nk);
+    
+    if (joinableRooms.length > 0) {
+      // Join the first available room
+      const match = joinableRooms[0];
+      const label = parseMatchLabel(match.label || '{}');
+      
+      return JSON.stringify({
+        success: true,
+        matchId: match.matchId,
+        roomCode: label?.roomCode || 'UNKNOWN',
+        mode: 'classic',
+        joinedExisting: true
+      });
+    }
+    
+    // No existing room, create a new public one
+    const roomCode = generateRoomCode();
+    const matchId = nk.matchCreate('tic_tac_toe', {
+      roomCode,
+      visibility: 'public',
+      creatorUserId: ctx.userId,
+      creatorNickname: nickname
+    });
+    
+    return JSON.stringify({
+      success: true,
+      matchId,
+      roomCode,
+      mode: 'classic',
+      joinedExisting: false
+    });
+    
+  } catch (error) {
+    logger.error(`quickPlayRpc error: ${error}`);
+    return JSON.stringify({
+      success: false,
+      error: 'failed_to_quick_play',
+      message: 'Failed to quick play'
+    });
+  }
+}

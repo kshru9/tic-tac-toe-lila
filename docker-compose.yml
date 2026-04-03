@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: nakama
+      POSTGRES_USER: nakama
+      POSTGRES_PASSWORD: nakama
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nakama"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nakama:
+    build:
+      context: ./nakama
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://nakama:nakama@postgres:5432/nakama
+      NAKAMA_RUNTIME_PATH: /nakama/data/modules
+    ports:
+      - "7350:7350"     # HTTP API
+      - "7351:7351"     # gRPC API
+      - "7350:7350/udp" # UDP socket
+    volumes:
+      - nakama_data:/nakama/data
+      - ./nakama/build:/nakama/data/modules
+    command:
+      - "/bin/sh"
+      - "-c"
+      - |
+        /nakama/nakama migrate up --database.address postgres://nakama:nakama@postgres:5432/nakama
+        /nakama/nakama --runtime.path /nakama/data/modules
+
+volumes:
+  postgres_data:
+  nakama_data:

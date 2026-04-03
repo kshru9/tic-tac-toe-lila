@@ -1,0 +1,21 @@
+{
+  "name": "nakama-runtime",
+  "version": "1.0.0",
+  "description": "Nakama TypeScript runtime module for Tic-Tac-Toe",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf build"
+  },
+  "dependencies": {
+    "@heroiclabs/nakama-js": "^3.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "keywords": ["nakama", "multiplayer", "tic-tac-toe"],
+  "author": "",
+  "license": "MIT"
+}
