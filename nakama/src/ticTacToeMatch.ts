@@ -184,6 +184,7 @@ function canUserJoin(state: TicTacToeMatchState, userId: string): { canJoin: boo
   const existingSymbol = getPlayerSymbol(state, userId);
   if (existingSymbol) {
     // User is reconnecting to their existing seat
+    // Allow reconnect even during reconnect_grace phase
     return { canJoin: true };
   }
   

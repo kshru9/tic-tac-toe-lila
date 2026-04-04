@@ -33,6 +33,7 @@ const config = {
 const STORAGE_KEYS = {
   CLIENT_SESSION: 'lila_tictactoe_client_session',
   DEVICE_ID: 'lila_tictactoe_device_id',
+  ACTIVE_MATCH: 'lila_tictactoe_active_match',
 };
 
 // Generate or retrieve device ID
@@ -96,6 +97,27 @@ function saveClientSession(session: ClientSession): void {
   localStorage.setItem(STORAGE_KEYS.CLIENT_SESSION, JSON.stringify(session));
 }
 
+// Load active match from storage
+function loadActiveMatch(): ActiveMatchContext | null {
+  const stored = localStorage.getItem(STORAGE_KEYS.ACTIVE_MATCH);
+  if (!stored) return null;
+  
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+}
+
+// Save active match to storage
+function saveActiveMatch(match: ActiveMatchContext | null): void {
+  if (match) {
+    localStorage.setItem(STORAGE_KEYS.ACTIVE_MATCH, JSON.stringify(match));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.ACTIVE_MATCH);
+  }
+}
+
 
 class NakamaClient {
   private client: Client;
@@ -120,6 +142,12 @@ class NakamaClient {
     const storedSession = loadClientSession();
     if (storedSession?.identity) {
       this.identity = storedSession.identity;
+    }
+    
+    // Try to restore active match from storage
+    const storedMatch = loadActiveMatch();
+    if (storedMatch) {
+      this.activeMatchContext = storedMatch;
     }
   }
 
@@ -223,11 +251,30 @@ class NakamaClient {
     this.lastConnectionError = null;
 
     try {
-      // Authenticate with device ID
-      // NOTE: Do not pass nickname as Nakama username. Usernames must be globally unique and
-      // will cause 409 conflicts when a different device/session reuses the same nickname.
-      // Nickname is carried separately (and sent as match join metadata) for display only.
-      this.session = await this.client.authenticateDevice(this.identity.deviceId, true);
+      // Try to restore session from storage first
+      const storedSession = loadClientSession();
+      if (storedSession?.sessionToken && storedSession?.refreshToken) {
+        try {
+          // Try to restore existing session
+          this.session = Session.restore(storedSession.sessionToken, storedSession.refreshToken);
+          // Check if session is expired or about to expire
+          const now = Math.floor(Date.now() / 1000);
+          if (this.session.isexpired(now)) {
+            // Session expired, refresh it
+            this.session = await this.client.sessionRefresh(this.session);
+            console.log('DEBUG: Successfully refreshed expired session');
+          } else {
+            console.log('DEBUG: Successfully restored valid session');
+          }
+        } catch (restoreError) {
+          console.log('DEBUG: Failed to restore session, creating new one:', restoreError);
+          // Fall back to device authentication
+          this.session = await this.client.authenticateDevice(this.identity.deviceId, true);
+        }
+      } else {
+        // No stored session, create new one
+        this.session = await this.client.authenticateDevice(this.identity.deviceId, true);
+      }
       
       // Create socket connection
       this.socket = this.client.createSocket(config.useSSL, false);
@@ -254,14 +301,12 @@ class NakamaClient {
       this.setConnectionState('connected');
       this.lastConnectionError = null;
       
-      // Update session storage
-      const storedSession = loadClientSession();
-      if (storedSession) {
-        storedSession.sessionToken = this.session.token;
-        storedSession.refreshToken = this.session.refresh_token;
-        storedSession.lastConnectedAt = Date.now();
-        saveClientSession(storedSession);
-      }
+      // Update session storage with fresh tokens
+      const updatedSession = loadClientSession() || { identity: this.identity };
+      updatedSession.sessionToken = this.session.token;
+      updatedSession.refreshToken = this.session.refresh_token;
+      updatedSession.lastConnectedAt = Date.now();
+      saveClientSession(updatedSession);
 
       return {
         success: true,
@@ -627,6 +672,8 @@ class NakamaClient {
         roomCode: roomCode || '', // Will be updated from state_sync if empty
         playerSymbol: null
       };
+      // Save to storage for reconnect/resume
+      saveActiveMatch(this.activeMatchContext);
       console.log('DEBUG joinMatch: Set activeMatchContext', this.activeMatchContext);
       this.emitMatchEvent('match_joined', { matchId: match.match_id });
       
@@ -729,6 +776,7 @@ class NakamaClient {
     
     console.log('DEBUG leaveMatch: Clearing activeMatchContext');
     this.activeMatchContext = null;
+    saveActiveMatch(null); // Clear from storage
     this.emitMatchEvent('match_left', {});
   }
 
@@ -772,6 +820,9 @@ class NakamaClient {
     } else {
       console.log('DEBUG updateMatchContextFromState: No userId available');
     }
+    
+    // Save to storage for reconnect/resume
+    saveActiveMatch(this.activeMatchContext);
     
     console.log('DEBUG updateMatchContextFromState: Updated context', this.activeMatchContext);
   }

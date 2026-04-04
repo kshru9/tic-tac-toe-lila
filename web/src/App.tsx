@@ -168,9 +168,25 @@ function App() {
     const identity = nakamaClient.getIdentity();
     if (identity) {
       setNickname(identity.nickname);
-      setView('lobby');
-      // If user already has an identity, try to connect automatically.
-      void nakamaClient.ensureConnected();
+      
+      // Check if we have an active match to resume
+      const activeMatch = nakamaClient.getActiveMatchContext();
+      if (activeMatch?.matchId) {
+        // We have an active match, try to reconnect and resume
+        setView('match');
+        setPendingRoomCode(activeMatch.roomCode);
+        void nakamaClient.ensureConnected().then(() => {
+          // After connection, try to rejoin the match
+          if (nakamaClient.getConnectionState() === 'connected') {
+            void nakamaClient.joinMatch(activeMatch.matchId, activeMatch.roomCode);
+          }
+        });
+      } else {
+        // No active match, go to lobby
+        setView('lobby');
+        // If user already has an identity, try to connect automatically.
+        void nakamaClient.ensureConnected();
+      }
     } else {
       setView('nickname_entry');
     }
