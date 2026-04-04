@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { 
-  PublicMatchState, 
+import {
+  PublicMatchState,
   PlayerSymbol,
-  ConnectionState 
+  ConnectionState,
 } from './types';
 import Board from './Board';
 import { nakamaClient } from './nakamaClient';
@@ -13,153 +13,26 @@ interface MatchViewProps {
   onLeaveMatch?: () => void;
 }
 
-// Simple inline styles matching the repo's styling approach
-const styles = {
-  container: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '24px',
-    maxWidth: '600px',
-    margin: '0 auto',
-    padding: '20px',
-  },
-  header: {
-    textAlign: 'center' as const,
-    marginBottom: '10px',
-  },
-  roomCode: {
-    fontSize: '1.2rem',
-    fontWeight: '600' as const,
-    color: '#333',
-    backgroundColor: '#f8f9fa',
-    padding: '8px 16px',
-    borderRadius: '8px',
-    border: '1px solid #dee2e6',
-    display: 'inline-block',
-    marginBottom: '16px',
-  },
-  players: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: '20px',
-    marginBottom: '20px',
-  },
-  playerCard: {
-    flex: '1',
-    padding: '16px',
-    borderRadius: '8px',
-    border: '2px solid #dee2e6',
-    textAlign: 'center' as const,
-    backgroundColor: '#fff',
-  },
-  playerCardCurrent: {
-    borderColor: '#007bff',
-    backgroundColor: '#f0f8ff',
-  },
-  playerCardYou: {
-    borderColor: '#28a745',
-    backgroundColor: '#f0fff4',
-  },
-  playerName: {
-    fontSize: '1.1rem',
-    fontWeight: '600' as const,
-    margin: '0 0 8px 0',
-  },
-  playerSymbol: {
-    fontSize: '1.5rem',
-    fontWeight: 'bold' as const,
-    margin: '0 0 8px 0',
-  },
-  playerStatus: {
-    fontSize: '0.9rem',
-    color: '#666',
-    margin: '0',
-  },
-  statusArea: {
-    textAlign: 'center' as const,
-    padding: '16px',
-    borderRadius: '8px',
-    backgroundColor: '#f8f9fa',
-    border: '1px solid #dee2e6',
-    marginBottom: '20px',
-  },
-  statusText: {
-    fontSize: '1.1rem',
-    fontWeight: '600' as const,
-    margin: '0',
-    color: '#333',
-  },
-  statusSubtext: {
-    fontSize: '0.9rem',
-    color: '#666',
-    margin: '8px 0 0 0',
-  },
-  outcomeArea: {
-    textAlign: 'center' as const,
-    padding: '20px',
-    borderRadius: '8px',
-    backgroundColor: '#fff3cd',
-    border: '1px solid #ffeaa7',
-    marginBottom: '20px',
-  },
-  outcomeText: {
-    fontSize: '1.3rem',
-    fontWeight: 'bold' as const,
-    margin: '0 0 8px 0',
-    color: '#856404',
-  },
-  outcomeSubtext: {
-    fontSize: '1rem',
-    color: '#856404',
-    margin: '0',
-  },
-  connectionStatus: {
-    padding: '12px 16px',
-    borderRadius: '8px',
-    fontSize: '0.9rem',
-    fontWeight: '500' as const,
-    textAlign: 'center' as const,
-    marginBottom: '16px',
-  },
-  connecting: {
-    backgroundColor: '#fff3e0',
-    color: '#f57c00',
-    border: '1px solid #ffe0b2',
-  },
-  reconnecting: {
-    backgroundColor: '#fff3e0',
-    color: '#f57c00',
-    border: '1px solid #ffe0b2',
-  },
-  disconnected: {
-    backgroundColor: '#ffebee',
-    color: '#c62828',
-    border: '1px solid #ffcdd2',
-  },
-  actionButton: {
-    padding: '14px 24px',
-    fontSize: '1rem',
-    fontWeight: '600' as const,
-    backgroundColor: '#6c757d',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    transition: 'background-color 0.2s',
-    marginTop: '10px',
-  },
-  actionButtonHover: {
-    backgroundColor: '#5a6268',
-  },
-};
+function connectionMatchClass(state: ConnectionState): string {
+  const base = 'match-connection';
+  switch (state) {
+    case 'connecting':
+    case 'reconnecting':
+      return `${base} match-connection--warn`;
+    case 'disconnected':
+      return `${base} match-connection--danger`;
+    default:
+      return base;
+  }
+}
 
 function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps) {
-  console.log('DEBUG MatchView: Component rendering', { 
+  console.log('DEBUG MatchView: Component rendering', {
     matchId: matchState.matchId,
     phase: matchState.phase,
-    currentTurn: matchState.currentTurn
+    currentTurn: matchState.currentTurn,
   });
-  
+
   const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [lastActionRejection, setLastActionRejection] = useState<string | null>(null);
 
@@ -216,18 +89,18 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   }, []); // Empty dependency array to run once
 
   function getPlayerSymbol(): PlayerSymbol | null {
-    console.log('DEBUG getPlayerSymbol: called', { 
+    console.log('DEBUG getPlayerSymbol: called', {
       userId,
       matchStatePlayerX: matchState.playerX?.userId,
       matchStatePlayerO: matchState.playerO?.userId,
-      matchStatePhase: matchState.phase
+      matchStatePhase: matchState.phase,
     });
-    
+
     if (!userId) {
       console.log('DEBUG getPlayerSymbol: No userId');
       return null;
     }
-    
+
     // First check matchState (authoritative)
     if (matchState.playerX?.userId === userId) {
       console.log('DEBUG getPlayerSymbol: Found X in matchState');
@@ -237,31 +110,31 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       console.log('DEBUG getPlayerSymbol: Found O in matchState');
       return 'O';
     }
-    
+
     // If matchState doesn't have user info yet (placeholder state),
     // check active match context which gets updated from state_sync
     const ctx = nakamaClient.getActiveMatchContext();
-    console.log('DEBUG getPlayerSymbol: Checking active context', { 
+    console.log('DEBUG getPlayerSymbol: Checking active context', {
       ctx,
-      playerSymbol: ctx?.playerSymbol 
+      playerSymbol: ctx?.playerSymbol,
     });
     return ctx?.playerSymbol || null;
   }
 
   function getWinningLine(matchState: PublicMatchState): number[] | null {
     if (!matchState.winner || !matchState.outcomeReason) return null;
-    
+
     // Simple implementation - in a real app, you'd compute the actual winning line
     // For Gamma 3, we'll just highlight all cells of the winner
     const winnerSymbol = matchState.winner;
     const line: number[] = [];
-    
+
     matchState.board.forEach((cell, index) => {
       if (cell === winnerSymbol) {
         line.push(index);
       }
     });
-    
+
     return line.length >= 3 ? line : null;
   }
 
@@ -277,24 +150,23 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       if (matchState.winner && matchState.winner !== playerSymbol) return 'You lose!';
       if (matchState.outcomeReason === 'draw_full_board') return 'Game ended in a draw!';
       if (matchState.outcomeReason === 'disconnect_forfeit') {
-        return matchState.winner === playerSymbol 
-          ? 'Opponent disconnected. You win by forfeit!' 
+        return matchState.winner === playerSymbol
+          ? 'Opponent disconnected. You win by forfeit!'
           : 'You disconnected. Opponent wins by forfeit!';
       }
       return 'Game completed';
     }
 
     if (isReconnectGrace) {
-      const opponentDisconnected = playerSymbol === 'X' 
-        ? !matchState.playerX?.connected 
-        : !matchState.playerO?.connected;
-      
+      const opponentDisconnected =
+        playerSymbol === 'X' ? !matchState.playerX?.connected : !matchState.playerO?.connected;
+
       if (opponentDisconnected) return 'Opponent reconnecting...';
       return 'You reconnected. Waiting for opponent...';
     }
 
     if (isWaitingForOpponent) return 'Waiting for opponent...';
-    
+
     if (isGameActive) {
       if (isYourTurn) return 'Your turn!';
       return "Opponent's turn";
@@ -305,14 +177,19 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
 
   function getStatusSubtext(): string | null {
     if (lastActionRejection) return lastActionRejection;
-    
+
     if (isGameCompleted && matchState.outcomeReason) {
       switch (matchState.outcomeReason) {
-        case 'win_row': return 'Winning row!';
-        case 'win_column': return 'Winning column!';
-        case 'win_diagonal': return 'Winning diagonal!';
-        case 'draw_full_board': return 'Board is full';
-        case 'disconnect_forfeit': return 'Disconnect forfeit';
+        case 'win_row':
+          return 'Winning row!';
+        case 'win_column':
+          return 'Winning column!';
+        case 'win_diagonal':
+          return 'Winning diagonal!';
+        case 'draw_full_board':
+          return 'Board is full';
+        case 'disconnect_forfeit':
+          return 'Disconnect forfeit';
       }
     }
 
@@ -324,52 +201,55 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     return null;
   }
 
-  function getConnectionStatusStyle() {
-    const base = styles.connectionStatus;
-    
-    switch (connectionState) {
-      case 'connecting':
-      case 'reconnecting':
-        return { ...base, ...styles.connecting };
-      case 'disconnected':
-        return { ...base, ...styles.disconnected };
-      default:
-        return base;
-    }
+  function getOutcomeVariant(): 'win' | 'lose' | 'draw' | 'neutral' {
+    if (!isGameCompleted) return 'neutral';
+    if (matchState.winner === playerSymbol) return 'win';
+    if (matchState.winner && matchState.winner !== playerSymbol) return 'lose';
+    if (matchState.outcomeReason === 'draw_full_board') return 'draw';
+    return 'neutral';
   }
 
   function getConnectionStatusText() {
     switch (connectionState) {
-      case 'connecting': return 'Connecting to multiplayer service...';
-      case 'reconnecting': return 'Reconnecting...';
-      case 'disconnected': return 'Disconnected from multiplayer service';
-      default: return null;
+      case 'connecting':
+        return 'Connecting to multiplayer service...';
+      case 'reconnecting':
+        return 'Reconnecting...';
+      case 'disconnected':
+        return 'Disconnected from multiplayer service';
+      default:
+        return null;
     }
   }
 
   async function handleCellClick(index: number) {
-    console.log('DEBUG handleCellClick: called', { 
-      index, 
-      isGameActive, 
-      isYourTurn, 
-      isSubmittingMove, 
+    console.log('DEBUG handleCellClick: called', {
+      index,
+      isGameActive,
+      isYourTurn,
+      isSubmittingMove,
       connectionState,
       playerSymbol: getPlayerSymbol(),
       currentTurn: matchState.currentTurn,
-      phase: matchState.phase
+      phase: matchState.phase,
     });
-    
+
     // Double-check conditions before sending move
     if (!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected') {
-      console.log('DEBUG handleCellClick: Move blocked', { 
-        isGameActive, 
-        isYourTurn, 
-        isSubmittingMove, 
+      console.log('DEBUG handleCellClick: Move blocked', {
+        isGameActive,
+        isYourTurn,
+        isSubmittingMove,
         connectionState,
-        reason: !isGameActive ? 'Game not active' : 
-                !isYourTurn ? 'Not your turn' :
-                isSubmittingMove ? 'Already submitting' :
-                connectionState !== 'connected' ? 'Not connected' : 'Unknown'
+        reason: !isGameActive
+          ? 'Game not active'
+          : !isYourTurn
+            ? 'Not your turn'
+            : isSubmittingMove
+              ? 'Already submitting'
+              : connectionState !== 'connected'
+                ? 'Not connected'
+                : 'Unknown',
       });
       return;
     }
@@ -383,16 +263,16 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     console.log('DEBUG handleCellClick: Sending move');
     setIsSubmittingMove(true);
     setLastActionRejection(null);
-    
+
     const result = await nakamaClient.sendMoveIntent(index);
-    
+
     if (!result.success) {
       console.log('DEBUG handleCellClick: Move failed', result.message);
       setLastActionRejection(result.message);
     } else {
       console.log('DEBUG handleCellClick: Move sent successfully');
     }
-    
+
     setIsSubmittingMove(false);
   }
 
@@ -405,91 +285,89 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   const connectionStatusText = getConnectionStatusText();
   const statusText = getStatusText();
   const statusSubtext = getStatusSubtext();
+  const outcomeVariant = getOutcomeVariant();
+
+  function playerCardClass(symbol: 'X' | 'O'): string {
+    const parts = ['match-player-card', symbol === 'X' ? 'match-player-card--x' : 'match-player-card--o'];
+    if (matchState.currentTurn === symbol) parts.push('match-player-card--turn');
+    if (playerSymbol === symbol) parts.push('match-player-card--you');
+    return parts.join(' ');
+  }
+
+  function seatStatusClass(connected: boolean | undefined): string {
+    const base = 'match-player-card__status';
+    if (connected) return `${base} match-player-card__status--live`;
+    return `${base} match-player-card__status--gone`;
+  }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <div style={styles.roomCode}>
-          Room: {matchState.roomCode}
+    <div className="match-view">
+      <div className="match-topbar">
+        <div className="match-room-chip" aria-label={`Room code ${matchState.roomCode}`}>
+          <span className="match-room-chip__label">Room</span>
+          <span>{matchState.roomCode}</span>
         </div>
       </div>
 
       {connectionStatusText && (
-        <div style={getConnectionStatusStyle()}>
+        <div className={connectionMatchClass(connectionState)} role="status">
           {connectionStatusText}
         </div>
       )}
 
-      <div style={styles.players}>
-        {/* Player X */}
-        <div style={{
-          ...styles.playerCard,
-          ...(matchState.currentTurn === 'X' ? styles.playerCardCurrent : {}),
-          ...(playerSymbol === 'X' ? styles.playerCardYou : {})
-        }}>
-          <div style={styles.playerSymbol}>X</div>
-          <div style={styles.playerName}>
+      <div className="match-player-strip">
+        <div className={playerCardClass('X')}>
+          <div className="match-player-card__mark" aria-hidden="true">
+            X
+          </div>
+          <div className="match-player-card__name">
             {getPlayerDisplayName(matchState.playerX, playerSymbol === 'X')}
           </div>
-          <div style={styles.playerStatus}>
+          <p className={seatStatusClass(matchState.playerX?.connected)}>
             {matchState.playerX?.connected ? 'Connected' : 'Disconnected'}
-          </div>
+          </p>
         </div>
 
-        {/* Player O */}
-        <div style={{
-          ...styles.playerCard,
-          ...(matchState.currentTurn === 'O' ? styles.playerCardCurrent : {}),
-          ...(playerSymbol === 'O' ? styles.playerCardYou : {})
-        }}>
-          <div style={styles.playerSymbol}>O</div>
-          <div style={styles.playerName}>
+        <div className={playerCardClass('O')}>
+          <div className="match-player-card__mark" aria-hidden="true">
+            O
+          </div>
+          <div className="match-player-card__name">
             {getPlayerDisplayName(matchState.playerO, playerSymbol === 'O')}
           </div>
-          <div style={styles.playerStatus}>
+          <p className={seatStatusClass(matchState.playerO?.connected)}>
             {matchState.playerO?.connected ? 'Connected' : 'Disconnected'}
-          </div>
+          </p>
         </div>
       </div>
 
       {isGameCompleted ? (
-        <div style={styles.outcomeArea}>
-          <div style={styles.outcomeText}>{statusText}</div>
-          {statusSubtext && (
-            <div style={styles.outcomeSubtext}>{statusSubtext}</div>
-          )}
+        <div className={`match-outcome match-outcome--${outcomeVariant}`}>
+          <div className="match-outcome__title">{statusText}</div>
+          {statusSubtext && <div className="match-outcome__sub">{statusSubtext}</div>}
         </div>
       ) : (
-        <div style={styles.statusArea}>
-          <div style={styles.statusText}>{statusText}</div>
-          {statusSubtext && (
-            <div style={styles.statusSubtext}>{statusSubtext}</div>
-          )}
+        <div className="match-status-panel">
+          <div className="match-status-panel__title">{statusText}</div>
+          {statusSubtext && <div className="match-status-panel__sub">{statusSubtext}</div>}
         </div>
       )}
 
-      <Board
-        board={matchState.board}
-        disabled={!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected'}
-        onCellClick={handleCellClick}
-        winningLine={winningLine}
-      />
+      <div className="match-board-wrap">
+        <Board
+          board={matchState.board}
+          disabled={!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected'}
+          onCellClick={handleCellClick}
+          winningLine={winningLine}
+        />
+      </div>
 
       {isGameCompleted && onLeaveMatch && (
-        <button
-          style={styles.actionButton}
-          onClick={handleLeaveMatch}
-          onMouseEnter={(e) => {
-            Object.assign(e.currentTarget.style, styles.actionButtonHover);
-          }}
-          onMouseLeave={(e) => {
-            Object.assign(e.currentTarget.style, {
-              backgroundColor: styles.actionButton.backgroundColor,
-            });
-          }}
-        >
-          Back to Lobby
-        </button>
+        <div className="match-actions">
+          <button type="button" className="btn btn--muted btn--block" onClick={handleLeaveMatch}>
+            Back to Lobby
+          </button>
+        </div>
       )}
     </div>
   );

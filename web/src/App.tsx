@@ -1,119 +1,22 @@
 import { useState, useEffect } from 'react';
+import './theme.css';
 import { nakamaClient } from './nakamaClient';
 import { ConnectionState, AppView, PublicMatchState, MatchEvent } from './types';
 import Lobby from './Lobby';
 import MatchView from './MatchView';
 
-// Simple inline styles for Gamma 1
-const styles = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f5f5f5',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    padding: '20px',
-    boxSizing: 'border-box' as const,
-  },
-  header: {
-    textAlign: 'center' as const,
-    marginBottom: '40px',
-  },
-  title: {
-    fontSize: '2.5rem',
-    fontWeight: 'bold' as const,
-    color: '#333',
-    margin: '0 0 10px 0',
-  },
-  subtitle: {
-    fontSize: '1.1rem',
-    color: '#666',
-    margin: '0',
-  },
-  content: {
-    maxWidth: '600px',
-    margin: '0 auto',
-    backgroundColor: 'white',
-    borderRadius: '12px',
-    padding: '30px',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-  },
-  loading: {
-    textAlign: 'center' as const,
-    padding: '40px',
-    color: '#666',
-  },
-  connectionBanner: {
-    padding: '12px 20px',
-    borderRadius: '8px',
-    marginBottom: '20px',
-    textAlign: 'center' as const,
-    fontSize: '0.9rem',
-    fontWeight: '500' as const,
-  },
-  connected: {
-    backgroundColor: '#e8f5e9',
-    color: '#2e7d32',
-    border: '1px solid #c8e6c9',
-  },
-  connecting: {
-    backgroundColor: '#fff3e0',
-    color: '#f57c00',
-    border: '1px solid #ffe0b2',
-  },
-  disconnected: {
-    backgroundColor: '#ffebee',
-    color: '#c62828',
-    border: '1px solid #ffcdd2',
-  },
-  nicknameForm: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '20px',
-  },
-  inputGroup: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '8px',
-  },
-  label: {
-    fontSize: '1rem',
-    fontWeight: '500' as const,
-    color: '#333',
-  },
-  input: {
-    padding: '12px 16px',
-    fontSize: '1rem',
-    border: '2px solid #ddd',
-    borderRadius: '8px',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-  },
-  inputFocus: {
-    borderColor: '#2196f3',
-  },
-  button: {
-    padding: '14px 24px',
-    fontSize: '1rem',
-    fontWeight: '600' as const,
-    backgroundColor: '#2196f3',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    transition: 'background-color 0.2s',
-  },
-  buttonHover: {
-    backgroundColor: '#1976d2',
-  },
-  buttonDisabled: {
-    backgroundColor: '#ccc',
-    cursor: 'not-allowed',
-  },
-  error: {
-    color: '#c62828',
-    fontSize: '0.9rem',
-    marginTop: '8px',
-  },
-};
+function connectionBannerClass(state: ConnectionState): string {
+  const base = 'app-connection-banner';
+  switch (state) {
+    case 'connected':
+      return `${base} app-connection-banner--connected`;
+    case 'connecting':
+    case 'reconnecting':
+      return `${base} app-connection-banner--pending`;
+    case 'disconnected':
+      return `${base} app-connection-banner--disconnected`;
+  }
+}
 
 function App() {
   const [view, setView] = useState<AppView>('loading');
@@ -139,18 +42,18 @@ function App() {
           setMatchState(event.data as PublicMatchState);
           setMatchError(null);
           break;
-          
+
         case 'action_rejected':
           console.log('DEBUG App: action_rejected received', event.data);
           setMatchError(event.data.message || 'Action rejected');
           break;
-          
+
         case 'match_joined':
           console.log('DEBUG App: match_joined received', event.data);
           setView('match');
           setMatchError(null);
           break;
-          
+
         case 'match_left':
           console.log('DEBUG App: match_left received');
           // Always return to lobby when leaving a match.
@@ -163,12 +66,12 @@ function App() {
 
     nakamaClient.addConnectionStateListener(handleConnectionStateChange);
     nakamaClient.addMatchEventListener(handleMatchEvent);
-    
+
     // Check if we have a stored identity
     const identity = nakamaClient.getIdentity();
     if (identity) {
       setNickname(identity.nickname);
-      
+
       // Check if we have an active match to resume
       const activeMatch = nakamaClient.getActiveMatchContext();
       if (activeMatch?.matchId) {
@@ -199,7 +102,7 @@ function App() {
 
   const handleNicknameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!nickname.trim()) {
       setNicknameError('Please enter a nickname');
       return;
@@ -209,13 +112,13 @@ function App() {
     setNicknameError('');
 
     const result = await nakamaClient.bootstrapWithNickname(nickname);
-    
+
     if (result.success) {
       setView('lobby');
     } else {
       setNicknameError(result.message);
     }
-    
+
     setIsSubmitting(false);
   };
 
@@ -223,7 +126,7 @@ function App() {
     setMatchError(null);
     setPendingRoomCode(roomCode || null);
     const result = await nakamaClient.joinMatch(matchId, roomCode);
-    
+
     if (!result.success) {
       setMatchError(result.message);
       setView('lobby');
@@ -240,18 +143,6 @@ function App() {
     setMatchError(null);
     setPendingRoomCode(null);
     setView('lobby');
-  };
-
-  const getConnectionBannerStyle = () => {
-    switch (connectionState) {
-      case 'connected':
-        return { ...styles.connectionBanner, ...styles.connected };
-      case 'connecting':
-      case 'reconnecting':
-        return { ...styles.connectionBanner, ...styles.connecting };
-      case 'disconnected':
-        return { ...styles.connectionBanner, ...styles.disconnected };
-    }
   };
 
   const getConnectionMessage = () => {
@@ -274,36 +165,33 @@ function App() {
     switch (view) {
       case 'loading':
         return (
-          <div style={styles.loading}>
+          <div className="app-loading">
             <p>Loading...</p>
           </div>
         );
 
       case 'nickname_entry':
         return (
-          <form onSubmit={handleNicknameSubmit} style={styles.nicknameForm}>
-            <div style={styles.inputGroup}>
-              <label htmlFor="nickname" style={styles.label}>
+          <form onSubmit={handleNicknameSubmit} className="app-form-stack">
+            <div className="app-field">
+              <label htmlFor="nickname" className="app-field__label">
                 Enter your nickname
               </label>
               <input
                 id="nickname"
                 type="text"
+                className="input"
                 value={nickname}
                 onChange={(e) => setNickname(e.target.value)}
                 placeholder="Player123"
-                style={styles.input}
                 maxLength={20}
                 autoFocus
               />
-              {nicknameError && <div style={styles.error}>{nicknameError}</div>}
+              {nicknameError && <div className="app-field__error">{nicknameError}</div>}
             </div>
             <button
               type="submit"
-              style={{
-                ...styles.button,
-                ...(isSubmitting ? styles.buttonDisabled : {}),
-              }}
+              className="btn btn--primary btn--block"
               disabled={isSubmitting}
             >
               {isSubmitting ? 'Connecting...' : 'Continue to Lobby'}
@@ -319,9 +207,9 @@ function App() {
           const ctx = nakamaClient.getActiveMatchContext();
           if (!ctx?.matchId) {
             return (
-              <div style={styles.loading}>
+              <div className="app-loading">
                 <p>Joining match...</p>
-                {matchError && <div style={styles.error}>{matchError}</div>}
+                {matchError && <div className="app-field__error">{matchError}</div>}
               </div>
             );
           }
@@ -367,26 +255,31 @@ function App() {
   };
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>LILA Tic-Tac-Toe</h1>
-        <p style={styles.subtitle}>Server-authoritative multiplayer</p>
-      </header>
+    <div className="app-root">
+      <div className="app-background" aria-hidden="true" />
+      <div className="app-shell">
+        <header className="app-brand">
+          <h1 className="app-brand__title">LILA Tic-Tac-Toe</h1>
+          <p className="app-brand__subtitle">Server-authoritative multiplayer</p>
+        </header>
 
-      <div style={styles.content}>
-        {view !== 'loading' && (
-          <div style={getConnectionBannerStyle()}>
-            {getConnectionMessage()}
+        <main className="app-stage">
+          <div className="app-card">
+            {view !== 'loading' && (
+              <div className={connectionBannerClass(connectionState)} role="status">
+                {getConnectionMessage()}
+              </div>
+            )}
+
+            {matchError && view !== 'match' && (
+              <div className="app-connection-banner app-connection-banner--error app-connection-banner--spaced">
+                {matchError}
+              </div>
+            )}
+
+            {renderContent()}
           </div>
-        )}
-        
-        {matchError && view !== 'match' && (
-          <div style={{ ...styles.connectionBanner, ...styles.disconnected, marginBottom: '20px' }}>
-            {matchError}
-          </div>
-        )}
-        
-        {renderContent()}
+        </main>
       </div>
     </div>
   );
