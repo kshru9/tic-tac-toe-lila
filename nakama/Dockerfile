@@ -26,12 +26,15 @@ RUN npm run build
 # Copy built module to Nakama runtime path
 RUN cp build/index.js /nakama/data/modules/
 
-# Copy and make startup script executable
+# Copy and make Railway startup script executable (only this one)
 COPY start-railway.sh /nakama/
 RUN chmod +x /nakama/start-railway.sh
 
 # Set working directory back to Nakama default
 WORKDIR /nakama
+
+# Override default entrypoint to use our Railway startup script
+ENTRYPOINT ["/bin/bash", "/nakama/start-railway.sh"]
 
 # Runtime configuration
 ENV NAKAMA_RUNTIME_PATH=/nakama/data/modules
