@@ -3,10 +3,10 @@
  * Does not know about Nakama presences, RPCs, sockets, or rooming.
  */
 
-export type CellValue = "X" | "O" | null;
-export type BoardState = CellValue[];
-export type WinningSymbol = "X" | "O";
-export type OutcomeReason = "win_row" | "win_column" | "win_diagonal" | "draw_full_board" | "disconnect_forfeit";
+type CellValue = "X" | "O" | null;
+type BoardState = CellValue[];
+type WinningSymbol = "X" | "O";
+type OutcomeReason = "win_row" | "win_column" | "win_diagonal" | "draw_full_board" | "disconnect_forfeit";
 
 const BOARD_SIZE = 9;
 const ROWS = 3;
@@ -15,21 +15,25 @@ const COLS = 3;
 /**
  * Create an empty 3x3 Tic-Tac-Toe board
  */
-export function createEmptyBoard(): BoardState {
-  return Array(BOARD_SIZE).fill(null);
+function createEmptyBoard(): BoardState {
+  const board: BoardState = [];
+  for (let i = 0; i < BOARD_SIZE; i++) {
+    board.push(null);
+  }
+  return board;
 }
 
 /**
  * Check if a cell index is valid (0-8)
  */
-export function isValidCellIndex(index: number): boolean {
+function isValidCellIndex(index: number): boolean {
   return index >= 0 && index < BOARD_SIZE;
 }
 
 /**
  * Check if a cell is empty
  */
-export function isCellEmpty(board: BoardState, index: number): boolean {
+function isCellEmpty(board: BoardState, index: number): boolean {
   if (!isValidCellIndex(index)) {
     return false;
   }
@@ -39,19 +43,19 @@ export function isCellEmpty(board: BoardState, index: number): boolean {
 /**
  * Get the next turn symbol
  */
-export function getNextTurn(currentTurn: "X" | "O"): "X" | "O" {
+function getNextTurn(currentTurn: "X" | "O"): "X" | "O" {
   return currentTurn === "X" ? "O" : "X";
 }
 
 /**
  * Apply a move to the board, returning a new board without mutating the input
  */
-export function applyMove(board: BoardState, index: number, symbol: "X" | "O"): BoardState {
+function applyMove(board: BoardState, index: number, symbol: "X" | "O"): BoardState {
   if (!isValidCellIndex(index) || !isCellEmpty(board, index)) {
-    throw new Error(`Invalid move: index ${index} is not empty or out of bounds`);
+    throw new Error("Invalid move: index " + index + " is not empty or out of bounds");
   }
   
-  const newBoard = [...board];
+  const newBoard = board.slice(0);
   newBoard[index] = symbol;
   return newBoard;
 }
@@ -59,7 +63,7 @@ export function applyMove(board: BoardState, index: number, symbol: "X" | "O"): 
 /**
  * Get the winning symbol if there is one, otherwise null
  */
-export function getWinner(board: BoardState): WinningSymbol | null {
+function getWinner(board: BoardState): WinningSymbol | null {
   // Check rows
   for (let row = 0; row < ROWS; row++) {
     const start = row * COLS;
@@ -89,7 +93,7 @@ export function getWinner(board: BoardState): WinningSymbol | null {
 /**
  * Get the reason for a win (row, column, or diagonal)
  */
-export function getWinReason(board: BoardState): "win_row" | "win_column" | "win_diagonal" | null {
+function getWinReason(board: BoardState): "win_row" | "win_column" | "win_diagonal" | null {
   // Check rows
   for (let row = 0; row < ROWS; row++) {
     const start = row * COLS;
@@ -119,14 +123,17 @@ export function getWinReason(board: BoardState): "win_row" | "win_column" | "win
 /**
  * Check if the board is completely full
  */
-export function isBoardFull(board: BoardState): boolean {
-  return board.every(cell => cell !== null);
+function isBoardFull(board: BoardState): boolean {
+  for (let i = 0; i < board.length; i++) {
+    if (board[i] === null) return false;
+  }
+  return true;
 }
 
 /**
  * Evaluate the board outcome
  */
-export function evaluateBoardOutcome(board: BoardState): {
+function evaluateBoardOutcome(board: BoardState): {
   winner: "X" | "O" | null;
   outcomeReason: "win_row" | "win_column" | "win_diagonal" | "draw_full_board" | null;
 } {

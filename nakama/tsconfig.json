@@ -1,19 +1,25 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "lib": ["ES2020"],
-    "outDir": "./build",
-    "rootDir": "./src",
-    "strict": true,
+    "target": "ES5",
+    "module": "none",
+    "lib": ["ES5"],
+    "outFile": "./build/index.js",
+    "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
+    "moduleResolution": "node",
+    "noEmitOnError": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
   },
-  "include": ["src/**/*"],
+  "files": [
+    "src/nakama.d.ts",
+    "src/gameRules.ts",
+    "src/ticTacToeMatch.ts",
+    "src/rpc.ts",
+    "src/index.ts"
+  ],
   "exclude": ["node_modules", "build"]
 }

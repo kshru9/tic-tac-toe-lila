@@ -154,8 +154,28 @@ const styles = {
 };
 
 function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps) {
+  console.log('DEBUG MatchView: Component rendering', { 
+    matchId: matchState.matchId,
+    phase: matchState.phase,
+    currentTurn: matchState.currentTurn
+  });
+  
   const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [lastActionRejection, setLastActionRejection] = useState<string | null>(null);
+
+  // Clear rejection when match state changes significantly (e.g., new match)
+  useEffect(() => {
+    console.log('DEBUG MatchView: matchId changed or component mounted', matchState.matchId);
+    setLastActionRejection(null);
+  }, [matchState.matchId]);
+
+  // Log when component mounts/unmounts
+  useEffect(() => {
+    console.log('DEBUG MatchView: Component mounted');
+    return () => {
+      console.log('DEBUG MatchView: Component unmounted');
+    };
+  }, []);
 
   const userId = nakamaClient.getUserId();
   const playerSymbol = getPlayerSymbol();
@@ -168,27 +188,64 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   // Get winning line indices for visual highlighting
   const winningLine = getWinningLine(matchState);
 
-  // Listen for action rejections
+  // Listen for action rejections and state sync
   useEffect(() => {
-    const handleActionRejected = (event: any) => {
+    const handleMatchEvent = (event: any) => {
+      console.log('DEBUG MatchView handleMatchEvent:', event.type, event.data);
       if (event.type === 'action_rejected') {
+        console.log('DEBUG MatchView: Setting lastActionRejection to:', event.data.message);
         setLastActionRejection(event.data.message || 'Action rejected');
         // Clear rejection after 3 seconds
-        setTimeout(() => setLastActionRejection(null), 3000);
+        setTimeout(() => {
+          console.log('DEBUG MatchView: Clearing lastActionRejection after timeout');
+          setLastActionRejection(null);
+        }, 3000);
+      } else if (event.type === 'state_sync') {
+        console.log('DEBUG MatchView: Clearing lastActionRejection on state_sync');
+        // Clear any stale rejection errors when we receive fresh state
+        setLastActionRejection(null);
       }
     };
 
-    nakamaClient.addMatchEventListener(handleActionRejected);
-    return () => nakamaClient.removeMatchEventListener(handleActionRejected);
-  });
+    console.log('DEBUG MatchView: Adding match event listener');
+    nakamaClient.addMatchEventListener(handleMatchEvent);
+    return () => {
+      console.log('DEBUG MatchView: Removing match event listener');
+      nakamaClient.removeMatchEventListener(handleMatchEvent);
+    };
+  }, []); // Empty dependency array to run once
 
   function getPlayerSymbol(): PlayerSymbol | null {
-    if (!userId) return null;
+    console.log('DEBUG getPlayerSymbol: called', { 
+      userId,
+      matchStatePlayerX: matchState.playerX?.userId,
+      matchStatePlayerO: matchState.playerO?.userId,
+      matchStatePhase: matchState.phase
+    });
     
-    if (matchState.playerX?.userId === userId) return 'X';
-    if (matchState.playerO?.userId === userId) return 'O';
+    if (!userId) {
+      console.log('DEBUG getPlayerSymbol: No userId');
+      return null;
+    }
     
-    return null;
+    // First check matchState (authoritative)
+    if (matchState.playerX?.userId === userId) {
+      console.log('DEBUG getPlayerSymbol: Found X in matchState');
+      return 'X';
+    }
+    if (matchState.playerO?.userId === userId) {
+      console.log('DEBUG getPlayerSymbol: Found O in matchState');
+      return 'O';
+    }
+    
+    // If matchState doesn't have user info yet (placeholder state),
+    // check active match context which gets updated from state_sync
+    const ctx = nakamaClient.getActiveMatchContext();
+    console.log('DEBUG getPlayerSymbol: Checking active context', { 
+      ctx,
+      playerSymbol: ctx?.playerSymbol 
+    });
+    return ctx?.playerSymbol || null;
   }
 
   function getWinningLine(matchState: PublicMatchState): number[] | null {
@@ -290,17 +347,49 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   }
 
   async function handleCellClick(index: number) {
-    if (!isGameActive || !isYourTurn || isSubmittingMove) {
+    console.log('DEBUG handleCellClick: called', { 
+      index, 
+      isGameActive, 
+      isYourTurn, 
+      isSubmittingMove, 
+      connectionState,
+      playerSymbol: getPlayerSymbol(),
+      currentTurn: matchState.currentTurn,
+      phase: matchState.phase
+    });
+    
+    // Double-check conditions before sending move
+    if (!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected') {
+      console.log('DEBUG handleCellClick: Move blocked', { 
+        isGameActive, 
+        isYourTurn, 
+        isSubmittingMove, 
+        connectionState,
+        reason: !isGameActive ? 'Game not active' : 
+                !isYourTurn ? 'Not your turn' :
+                isSubmittingMove ? 'Already submitting' :
+                connectionState !== 'connected' ? 'Not connected' : 'Unknown'
+      });
       return;
     }
 
+    // Validate index
+    if (typeof index !== 'number' || index < 0 || index > 8) {
+      console.error('DEBUG handleCellClick: Invalid index', index);
+      return;
+    }
+
+    console.log('DEBUG handleCellClick: Sending move');
     setIsSubmittingMove(true);
     setLastActionRejection(null);
     
     const result = await nakamaClient.sendMoveIntent(index);
     
     if (!result.success) {
+      console.log('DEBUG handleCellClick: Move failed', result.message);
       setLastActionRejection(result.message);
+    } else {
+      console.log('DEBUG handleCellClick: Move sent successfully');
     }
     
     setIsSubmittingMove(false);

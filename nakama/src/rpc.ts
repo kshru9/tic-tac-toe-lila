@@ -2,16 +2,30 @@
  * Room creation, joining, and discovery RPC layer for Tic-Tac-Toe
  */
 
-import matchHandler, { MatchLabel } from './ticTacToeMatch';
-
 // Room code generation
-const ROOM_CODE_LENGTH = 6;
-const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const RPC_ROOM_CODE_LENGTH = 6;
+const RPC_ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-function generateRoomCode(): string {
+type RpcMatchPhase =
+  | 'waiting_for_opponent'
+  | 'ready'
+  | 'in_progress'
+  | 'reconnect_grace'
+  | 'completed';
+
+interface MatchLabel {
+  roomCode: string;
+  visibility: 'public' | 'private';
+  mode: 'classic';
+  phase: RpcMatchPhase;
+  occupancy: 0 | 1 | 2;
+  open: boolean;
+}
+
+function generateRoomCodeRpc(): string {
   let code = '';
-  for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
-    code += ALPHANUMERIC[Math.floor(Math.random() * ALPHANUMERIC.length)];
+  for (let i = 0; i < RPC_ROOM_CODE_LENGTH; i++) {
+    code += RPC_ALPHANUMERIC[Math.floor(Math.random() * RPC_ALPHANUMERIC.length)];
   }
   return code;
 }
@@ -25,16 +39,26 @@ function sanitizeNickname(nickname: string): string {
 function parseMatchLabel(labelString: string): MatchLabel | null {
   try {
     return JSON.parse(labelString);
-  } catch {
+  } catch (e) {
     return null;
   }
 }
 
+function listMatches(nk: nkruntime.Nakama, limit: number, authoritative?: boolean, label?: string, minSize?: number, maxSize?: number, query?: string): nkruntime.MatchList.Match[] {
+  // Nakama runtime returns either `Match[]` or `{ matches: Match[] }` depending on the runtime/typings.
+  const result: any = nk.matchList(limit, authoritative, label, minSize, maxSize, query);
+  if (Array.isArray(result)) return result as nkruntime.MatchList.Match[];
+  if (result && Array.isArray(result.matches)) return result.matches as nkruntime.MatchList.Match[];
+  return [];
+}
+
 // Find room by room code
 function findRoomByCode(nk: nkruntime.Nakama, roomCode: string): nkruntime.MatchList.Match | null {
-  const matches = nk.matchList(100, true, null, null, 1, null);
+  // Include size 0 matches so a newly-created private room can be found even before the creator
+  // socket-joins (creator seat is reserved at matchInit and label includes roomCode).
+  const matches = listMatches(nk, 100, true, undefined, 0, 2, undefined);
   
-  for (const match of matches.matches) {
+  for (const match of matches) {
     const label = parseMatchLabel(match.label || '{}');
     if (label && label.roomCode === roomCode) {
       return match;
@@ -46,10 +70,11 @@ function findRoomByCode(nk: nkruntime.Nakama, roomCode: string): nkruntime.Match
 
 // Get joinable public waiting rooms
 function getJoinablePublicRooms(nk: nkruntime.Nakama): nkruntime.MatchList.Match[] {
-  const matches = nk.matchList(100, true, null, null, 1, null);
+  // Public discovery/quick-play should only consider rooms with exactly one seated player.
+  const matches = listMatches(nk, 100, true, undefined, 1, 1, undefined);
   const joinableRooms: nkruntime.MatchList.Match[] = [];
   
-  for (const match of matches.matches) {
+  for (const match of matches) {
     const label = parseMatchLabel(match.label || '{}');
     if (label && label.visibility === 'public' && label.open && label.phase === 'waiting_for_opponent') {
       joinableRooms.push(match);
@@ -60,7 +85,7 @@ function getJoinablePublicRooms(nk: nkruntime.Nakama): nkruntime.MatchList.Match
 }
 
 // RPC: Create room
-export function createRoomRpc(
+function createRoomRpc(
   ctx: nkruntime.Context,
   logger: nkruntime.Logger,
   nk: nkruntime.Nakama,
@@ -71,7 +96,7 @@ export function createRoomRpc(
     const nickname = sanitizeNickname(params.nickname || 'Player');
     const isPrivate = params.isPrivate === true;
     
-    const roomCode = generateRoomCode();
+    const roomCode = generateRoomCodeRpc();
     const visibility = isPrivate ? 'private' : 'public';
     
     // Create match
@@ -91,7 +116,7 @@ export function createRoomRpc(
     });
     
   } catch (error) {
-    logger.error(`createRoomRpc error: ${error}`);
+    logger.error('createRoomRpc error: ' + error);
     return JSON.stringify({
       success: false,
       error: 'failed_to_create_room',
@@ -101,7 +126,7 @@ export function createRoomRpc(
 }
 
 // RPC: Join room by code
-export function joinRoomRpc(
+function joinRoomRpc(
   ctx: nkruntime.Context,
   logger: nkruntime.Logger,
   nk: nkruntime.Nakama,
@@ -111,7 +136,7 @@ export function joinRoomRpc(
     const params = payload ? JSON.parse(payload) : {};
     const roomCode = params.roomCode;
     
-    if (!roomCode || typeof roomCode !== 'string' || roomCode.length !== ROOM_CODE_LENGTH) {
+    if (!roomCode || typeof roomCode !== 'string' || roomCode.length !== RPC_ROOM_CODE_LENGTH) {
       return JSON.stringify({
         success: false,
         error: 'invalid_room_code',
@@ -130,7 +155,12 @@ export function joinRoomRpc(
     
     // Check if room is joinable by parsing label
     const label = parseMatchLabel(match.label || '{}');
-    if (!label || !label.open) {
+    const isJoinable =
+      !!label &&
+      label.occupancy < 2 &&
+      label.phase === 'waiting_for_opponent' &&
+      label.open;
+    if (!isJoinable) {
       return JSON.stringify({
         success: false,
         error: 'room_not_joinable',
@@ -146,7 +176,7 @@ export function joinRoomRpc(
     });
     
   } catch (error) {
-    logger.error(`joinRoomRpc error: ${error}`);
+    logger.error('joinRoomRpc error: ' + error);
     return JSON.stringify({
       success: false,
       error: 'failed_to_join_room',
@@ -156,7 +186,7 @@ export function joinRoomRpc(
 }
 
 // RPC: List joinable rooms
-export function listRoomsRpc(
+function listRoomsRpc(
   ctx: nkruntime.Context,
   logger: nkruntime.Logger,
   nk: nkruntime.Nakama,
@@ -169,9 +199,9 @@ export function listRoomsRpc(
       const label = parseMatchLabel(match.label || '{}');
       return {
         matchId: match.matchId,
-        roomCode: label?.roomCode || 'UNKNOWN',
+        roomCode: (label && label.roomCode) ? label.roomCode : 'UNKNOWN',
         mode: 'classic',
-        playerCount: label?.occupancy || 0,
+        playerCount: (label && label.occupancy) ? label.occupancy : 0,
         maxPlayers: 2
       };
     });
@@ -182,7 +212,7 @@ export function listRoomsRpc(
     });
     
   } catch (error) {
-    logger.error(`listRoomsRpc error: ${error}`);
+    logger.error('listRoomsRpc error: ' + error);
     return JSON.stringify({
       success: false,
       error: 'failed_to_list_rooms',
@@ -193,7 +223,7 @@ export function listRoomsRpc(
 }
 
 // RPC: Quick play
-export function quickPlayRpc(
+function quickPlayRpc(
   ctx: nkruntime.Context,
   logger: nkruntime.Logger,
   nk: nkruntime.Nakama,
@@ -214,14 +244,14 @@ export function quickPlayRpc(
       return JSON.stringify({
         success: true,
         matchId: match.matchId,
-        roomCode: label?.roomCode || 'UNKNOWN',
+        roomCode: (label && label.roomCode) ? label.roomCode : 'UNKNOWN',
         mode: 'classic',
         joinedExisting: true
       });
     }
     
     // No existing room, create a new public one
-    const roomCode = generateRoomCode();
+    const roomCode = generateRoomCodeRpc();
     const matchId = nk.matchCreate('tic_tac_toe', {
       roomCode,
       visibility: 'public',
@@ -238,7 +268,7 @@ export function quickPlayRpc(
     });
     
   } catch (error) {
-    logger.error(`quickPlayRpc error: ${error}`);
+    logger.error('quickPlayRpc error: ' + error);
     return JSON.stringify({
       success: false,
       error: 'failed_to_quick_play',

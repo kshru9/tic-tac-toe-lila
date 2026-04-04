@@ -1,14 +1,10 @@
-import { Server } from '@heroiclabs/nakama-js';
-import matchHandler from './ticTacToeMatch';
-import { createRoomRpc, joinRoomRpc, listRoomsRpc, quickPlayRpc } from './rpc';
-
 /**
  * Nakama runtime initialization for Tic-Tac-Toe
  * 
  * This module initializes the multiplayer game runtime.
  * Gamma 2 implements the authoritative multiplayer core.
  */
-const InitModule: nkruntime.InitModule = function(
+function InitModule(
   ctx: nkruntime.Context,
   logger: nkruntime.Logger,
   nk: nkruntime.Nakama,
@@ -40,6 +36,3 @@ function healthRpc(ctx: nkruntime.Context, logger: nkruntime.Logger, nk: nkrunti
     timestamp: Date.now()
   });
 }
-
-// Export the initialization function
-export { InitModule };

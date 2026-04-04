@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { nakamaClient } from './nakamaClient';
-import { RoomSummary } from './types';
+import { ConnectionState, RoomSummary } from './types';
 
 interface LobbyProps {
-  onJoinMatch?: (matchId: string) => void;
+  onJoinMatch?: (matchId: string, roomCode?: string) => void;
 }
 
 // Simple inline styles for Gamma 1
@@ -178,8 +178,10 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [isRefreshingRooms, setIsRefreshingRooms] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>(nakamaClient.getConnectionState());
 
   const nickname = nakamaClient.getNickname();
+  const isConnected = connectionState === 'connected';
 
   const clearMessages = () => {
     setStatusMessage('');
@@ -197,7 +199,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   };
 
   const handleQuickPlay = async () => {
-    if (!nakamaClient.isConnected()) {
+    if (!isConnected) {
       showError('Not connected to multiplayer service');
       return;
     }
@@ -208,9 +210,9 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     const result = await nakamaClient.quickPlay({ gameMode: 'classic' });
     
     if (result.success && result.data) {
-      showStatus('Match found! Joining...');
+      showStatus(`Match found (${result.data.roomCode})! Joining...`);
       if (onJoinMatch) {
-        onJoinMatch(result.data.matchId);
+        onJoinMatch(result.data.matchId, result.data.roomCode);
       }
     } else {
       showError(result.message || 'Failed to find match');
@@ -220,7 +222,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   };
 
   const handleCreateRoom = async () => {
-    if (!nakamaClient.isConnected()) {
+    if (!isConnected) {
       showError('Not connected to multiplayer service');
       return;
     }
@@ -228,12 +230,12 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     setIsLoading(true);
     clearMessages();
 
-    const result = await nakamaClient.createRoom({});
+    const result = await nakamaClient.createRoom({ isPrivate: true });
     
     if (result.success && result.data) {
-      showStatus('Room created! Joining...');
+      showStatus(`Room ${result.data.roomCode} created! Joining...`);
       if (onJoinMatch) {
-        onJoinMatch(result.data.matchId);
+        onJoinMatch(result.data.matchId, result.data.roomCode);
       }
     } else {
       showError(result.message || 'Failed to create room');
@@ -243,7 +245,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   };
 
   const handleJoinRoom = async () => {
-    if (!nakamaClient.isConnected()) {
+    if (!isConnected) {
       showError('Not connected to multiplayer service');
       return;
     }
@@ -262,7 +264,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
       showStatus('Joined room!');
       setRoomCode('');
       if (onJoinMatch) {
-        onJoinMatch(result.data.matchId);
+        onJoinMatch(result.data.matchId, roomCode.trim());
       }
     } else {
       showError(result.message || 'Failed to join room');
@@ -296,7 +298,23 @@ function Lobby({ onJoinMatch }: LobbyProps) {
 
   // Load rooms on initial mount
   useEffect(() => {
-    handleRefreshRooms();
+    if (isConnected) {
+      handleRefreshRooms();
+    }
+  }, []);
+
+  // React to connection state changes and refresh rooms when we connect.
+  useEffect(() => {
+    const listener = (state: ConnectionState) => {
+      setConnectionState(state);
+      if (state === 'connected') {
+        void handleRefreshRooms();
+      }
+    };
+    nakamaClient.addConnectionStateListener(listener);
+    return () => {
+      nakamaClient.removeConnectionStateListener(listener);
+    };
   }, []);
 
   return (
@@ -313,7 +331,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
           <button
             onClick={handleQuickPlay}
             style={styles.primaryButton}
-            disabled={isLoading || !nakamaClient.isConnected()}
+            disabled={isLoading || !isConnected}
           >
             Find Match
           </button>
@@ -328,7 +346,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
           <button
             onClick={handleCreateRoom}
             style={styles.secondaryButton}
-            disabled={isLoading || !nakamaClient.isConnected()}
+            disabled={isLoading || !isConnected}
           >
             Create Private Room
           </button>
@@ -353,7 +371,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
               <button
                 onClick={handleJoinRoom}
                 style={styles.smallButton}
-                disabled={isLoading || !nakamaClient.isConnected()}
+                disabled={isLoading || !isConnected}
               >
                 Join
               </button>
@@ -372,7 +390,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
           <button
             onClick={handleRefreshRooms}
             style={styles.refreshButton}
-            disabled={isRefreshingRooms || !nakamaClient.isConnected()}
+            disabled={isRefreshingRooms || !isConnected}
           >
             {isRefreshingRooms ? 'Refreshing...' : 'Refresh'}
           </button>
@@ -407,7 +425,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
                 <button
                   onClick={() => {
                     if (onJoinMatch) {
-                      onJoinMatch(room.matchId);
+                      onJoinMatch(room.matchId, room.roomCode);
                     }
                   }}
                   style={{
@@ -426,7 +444,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
                   onMouseLeave={(e) => {
                     e.currentTarget.style.backgroundColor = '#28a745';
                   }}
-                  disabled={!nakamaClient.isConnected()}
+                  disabled={!isConnected}
                 >
                   Join
                 </button>
@@ -457,7 +475,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
       )}
 
       {/* Connection Status Note */}
-      {!nakamaClient.isConnected() && (
+      {!isConnected && (
         <div style={styles.errorMessage}>
           You are not connected to the multiplayer service. Some features may be unavailable.
         </div>

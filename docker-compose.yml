@@ -35,11 +35,10 @@ services:
       - nakama_data:/nakama/data
       - ./nakama/build:/nakama/data/modules
     command:
-      - "/bin/sh"
-      - "-c"
-      - |
-        /nakama/nakama migrate up --database.address postgres://nakama:nakama@postgres:5432/nakama
-        /nakama/nakama --runtime.path /nakama/data/modules
+      - "--runtime.path"
+      - "/nakama/data/modules"
+      - "-database.address"
+      - "postgres://nakama:nakama@postgres:5432/nakama?sslmode=disable"
 
 volumes:
   postgres_data:

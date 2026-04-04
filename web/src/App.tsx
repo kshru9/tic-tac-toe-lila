@@ -123,6 +123,7 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [matchState, setMatchState] = useState<PublicMatchState | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
+  const [pendingRoomCode, setPendingRoomCode] = useState<string | null>(null);
 
   // Subscribe to connection state changes and match events
   useEffect(() => {
@@ -131,27 +132,31 @@ function App() {
     };
 
     const handleMatchEvent = (event: MatchEvent) => {
+      console.log('DEBUG App handleMatchEvent:', event.type, event.data);
       switch (event.type) {
         case 'state_sync':
+          console.log('DEBUG App: state_sync received', event.data);
           setMatchState(event.data as PublicMatchState);
           setMatchError(null);
           break;
           
         case 'action_rejected':
+          console.log('DEBUG App: action_rejected received', event.data);
           setMatchError(event.data.message || 'Action rejected');
           break;
           
         case 'match_joined':
+          console.log('DEBUG App: match_joined received', event.data);
           setView('match');
           setMatchError(null);
           break;
           
         case 'match_left':
-          // Only go back to lobby if we're currently in match view
-          if (view === 'match') {
-            setView('lobby');
-            setMatchState(null);
-          }
+          console.log('DEBUG App: match_left received');
+          // Always return to lobby when leaving a match.
+          setView('lobby');
+          setMatchState(null);
+          setPendingRoomCode(null);
           break;
       }
     };
@@ -164,6 +169,8 @@ function App() {
     if (identity) {
       setNickname(identity.nickname);
       setView('lobby');
+      // If user already has an identity, try to connect automatically.
+      void nakamaClient.ensureConnected();
     } else {
       setView('nickname_entry');
     }
@@ -172,7 +179,7 @@ function App() {
       nakamaClient.removeConnectionStateListener(handleConnectionStateChange);
       nakamaClient.removeMatchEventListener(handleMatchEvent);
     };
-  }, [view]);
+  }, []);
 
   const handleNicknameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,13 +203,18 @@ function App() {
     setIsSubmitting(false);
   };
 
-  const handleJoinMatch = async (matchId: string) => {
+  const handleJoinMatch = async (matchId: string, roomCode?: string) => {
     setMatchError(null);
-    const result = await nakamaClient.joinMatch(matchId);
+    setPendingRoomCode(roomCode || null);
+    const result = await nakamaClient.joinMatch(matchId, roomCode);
     
     if (!result.success) {
       setMatchError(result.message);
       setView('lobby');
+      setPendingRoomCode(null);
+    } else {
+      // Ensure we transition even if the match_joined event is missed.
+      setView('match');
     }
   };
 
@@ -210,6 +222,7 @@ function App() {
     nakamaClient.leaveMatch();
     setMatchState(null);
     setMatchError(null);
+    setPendingRoomCode(null);
     setView('lobby');
   };
 
@@ -226,6 +239,7 @@ function App() {
   };
 
   const getConnectionMessage = () => {
+    const lastError = nakamaClient.getLastConnectionError();
     switch (connectionState) {
       case 'connected':
         return '✓ Connected to multiplayer service';
@@ -234,7 +248,9 @@ function App() {
       case 'reconnecting':
         return 'Reconnecting...';
       case 'disconnected':
-        return 'Disconnected from multiplayer service';
+        return lastError
+          ? `Disconnected from multiplayer service (${lastError})`
+          : 'Disconnected from multiplayer service';
     }
   };
 
@@ -284,11 +300,41 @@ function App() {
 
       case 'match':
         if (!matchState) {
+          const ctx = nakamaClient.getActiveMatchContext();
+          if (!ctx?.matchId) {
+            return (
+              <div style={styles.loading}>
+                <p>Joining match...</p>
+                {matchError && <div style={styles.error}>{matchError}</div>}
+              </div>
+            );
+          }
+
+          // Allow rendering a "waiting room" view before the first authoritative state sync arrives.
+          const roomCode = pendingRoomCode || ctx.roomCode || '...';
+          const placeholderState: PublicMatchState = {
+            matchId: ctx.matchId,
+            roomCode,
+            mode: 'classic',
+            phase: 'waiting_for_opponent',
+            board: Array(9).fill(null),
+            playerX: null,
+            playerO: null,
+            currentTurn: 'X', // Backend initializes with X as currentTurn
+            winner: null,
+            outcomeReason: null,
+            moveCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            reconnectDeadlineAt: null,
+          };
+
           return (
-            <div style={styles.loading}>
-              <p>Joining match...</p>
-              {matchError && <div style={styles.error}>{matchError}</div>}
-            </div>
+            <MatchView
+              matchState={placeholderState}
+              connectionState={connectionState}
+              onLeaveMatch={handleLeaveMatch}
+            />
           );
         }
         return (

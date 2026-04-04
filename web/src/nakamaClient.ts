@@ -22,7 +22,7 @@ import {
 
 // Configuration from environment
 const config = {
-  host: (import.meta as any).env.VITE_NAKAMA_HOST || '[private-ip-redacted]',
+  host: (import.meta as any).env.VITE_NAKAMA_HOST || 'localhost',
   port: parseInt((import.meta as any).env.VITE_NAKAMA_PORT || '7350'),
   serverKey: (import.meta as any).env.VITE_NAKAMA_SERVER_KEY || 'defaultkey',
   useSSL: (import.meta as any).env.VITE_NAKAMA_USE_SSL === 'true',
@@ -43,6 +43,40 @@ function getOrCreateDeviceId(): string {
     localStorage.setItem(STORAGE_KEYS.DEVICE_ID, deviceId);
   }
   return deviceId;
+}
+
+// Convert string to Uint8Array with fallback for older browsers
+function stringToUint8Array(str: string): Uint8Array {
+  if (typeof TextEncoder !== 'undefined') {
+    const encoder = new TextEncoder();
+    return encoder.encode(str);
+  } else {
+    // Fallback for older browsers
+    const arr = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+      arr[i] = str.charCodeAt(i);
+    }
+    return arr;
+  }
+}
+
+// Decode Uint8Array to string with fallback
+function decodeUint8ArrayToString(uint8Array: Uint8Array): string {
+  if (typeof TextDecoder !== 'undefined') {
+    return new TextDecoder().decode(uint8Array);
+  } else {
+    // Fallback for older browsers
+    let result = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      result += String.fromCharCode(uint8Array[i]);
+    }
+    return result;
+  }
+}
+
+// Decode ArrayBuffer to string with fallback
+function decodeArrayBufferToString(arrayBuffer: ArrayBuffer): string {
+  return decodeUint8ArrayToString(new Uint8Array(arrayBuffer));
 }
 
 // Load client session from storage
@@ -70,17 +104,16 @@ class NakamaClient {
   private connectionState: ConnectionState = 'disconnected';
   private connectionStateListeners: ((state: ConnectionState) => void)[] = [];
   private identity: PlayerIdentity | null = null;
+  private lastConnectionError: string | null = null;
   private matchEventListeners: ((event: MatchEvent) => void)[] = [];
   private activeMatchContext: ActiveMatchContext | null = null;
 
   constructor() {
-    const scheme = config.useSSL ? 'https' : 'http';
-    const wsScheme = config.useSSL ? 'wss' : 'ws';
-    
     this.client = new Client(
       config.serverKey,
-      `${scheme}://${config.host}:${config.port}`,
-      `${wsScheme}://${config.host}:${config.websocketPort}`
+      config.host,
+      config.port.toString(),
+      config.useSSL
     );
     
     // Try to restore session from storage
@@ -113,6 +146,10 @@ class NakamaClient {
     return this.connectionState;
   }
 
+  getLastConnectionError(): string | null {
+    return this.lastConnectionError;
+  }
+
   getIdentity(): PlayerIdentity | null {
     return this.identity;
   }
@@ -130,6 +167,7 @@ class NakamaClient {
   }
 
   private emitMatchEvent(type: MatchEventType, data: any): void {
+    console.log('DEBUG emitMatchEvent: Emitting', { type, data, listenerCount: this.matchEventListeners.length });
     const event: MatchEvent = { type, data };
     this.matchEventListeners.forEach(listener => listener(event));
   }
@@ -160,10 +198,20 @@ class NakamaClient {
     });
 
     // Connect to Nakama
-    return this.connect();
+    return this.connectInternal();
   }
 
-  private async connect(): Promise<ShellActionResult<PlayerIdentity>> {
+  async ensureConnected(): Promise<ShellActionResult<PlayerIdentity>> {
+    if (this.connectionState === 'connected') {
+      return { success: true, message: 'Already connected.', data: this.identity || undefined };
+    }
+    if (this.connectionState === 'connecting' || this.connectionState === 'reconnecting') {
+      return { success: true, message: 'Connection in progress.', data: this.identity || undefined };
+    }
+    return this.connectInternal();
+  }
+
+  private async connectInternal(): Promise<ShellActionResult<PlayerIdentity>> {
     if (!this.identity) {
       return {
         success: false,
@@ -172,15 +220,27 @@ class NakamaClient {
     }
 
     this.setConnectionState('connecting');
+    this.lastConnectionError = null;
 
     try {
       // Authenticate with device ID
-      this.session = await this.client.authenticateDevice(this.identity.deviceId, true, this.identity.nickname);
+      // NOTE: Do not pass nickname as Nakama username. Usernames must be globally unique and
+      // will cause 409 conflicts when a different device/session reuses the same nickname.
+      // Nickname is carried separately (and sent as match join metadata) for display only.
+      this.session = await this.client.authenticateDevice(this.identity.deviceId, true);
       
       // Create socket connection
-      this.socket = this.client.createSocket(false, false);
+      this.socket = this.client.createSocket(config.useSSL, false);
       
       // Set up socket handlers
+      this.socket.ondisconnect = (_evt) => {
+        this.lastConnectionError = 'Socket disconnected';
+        this.setConnectionState('disconnected');
+      };
+      this.socket.onerror = (_evt) => {
+        this.lastConnectionError = 'Socket error';
+        this.setConnectionState('disconnected');
+      };
       this.socket.onmatchdata = (matchData) => {
         this.handleMatchData(matchData);
       };
@@ -192,6 +252,7 @@ class NakamaClient {
       await this.socket.connect(this.session, false);
       
       this.setConnectionState('connected');
+      this.lastConnectionError = null;
       
       // Update session storage
       const storedSession = loadClientSession();
@@ -209,11 +270,12 @@ class NakamaClient {
       };
     } catch (error) {
       this.setConnectionState('disconnected');
+      this.lastConnectionError = error instanceof Error ? error.message : 'Unknown error';
       console.error('Connection error:', error);
       
       return {
         success: false,
-        message: `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Connection failed: ${this.lastConnectionError}`,
       };
     }
   }
@@ -224,30 +286,67 @@ class NakamaClient {
     const opCode = matchData.op_code;
     const data = matchData.data;
     
+    console.log('DEBUG handleMatchData: Received match data', {
+      matchId,
+      opCode,
+      dataType: typeof data,
+      dataPreview: typeof data === 'string' ? data.substring(0, 100) : String(data),
+      activeMatchId: this.activeMatchContext?.matchId,
+      hasActiveContext: !!this.activeMatchContext
+    });
+    
     // Only process if this is our active match
-    if (this.activeMatchContext?.matchId !== matchId) {
+    if (!this.activeMatchContext || this.activeMatchContext.matchId !== matchId) {
+      console.log('DEBUG handleMatchData: Ignoring - no active match or different match', {
+        activeMatchId: this.activeMatchContext?.matchId,
+        receivedMatchId: matchId,
+        match: this.activeMatchContext?.matchId === matchId
+      });
       return;
     }
 
     try {
-      const parsedData = JSON.parse(data);
+      const decoded =
+        typeof data === 'string'
+          ? data
+          : data instanceof Uint8Array
+            ? decodeUint8ArrayToString(data)
+            : data instanceof ArrayBuffer
+              ? decodeArrayBufferToString(data)
+              : data && typeof data === 'object' && 'buffer' in data
+                ? decodeArrayBufferToString((data as any).buffer)
+                : String(data);
+      
+      console.log('DEBUG handleMatchData: Decoded data', {
+        decoded,
+        decodedType: typeof decoded,
+        length: decoded.length
+      });
+      
+      const parsedData = JSON.parse(decoded);
+      console.log('DEBUG handleMatchData: Parsed data', { parsedData });
       
       switch (opCode) {
         case 2: // OP_CODE_STATE_SYNC
+          console.log('DEBUG handleMatchData: STATE_SYNC for match', matchId, 'state:', parsedData);
           const matchState = parsedData as PublicMatchState;
           this.updateMatchContextFromState(matchState);
           this.emitMatchEvent('state_sync', matchState);
           break;
           
         case 3: // OP_CODE_ACTION_REJECTED
+          console.log('DEBUG handleMatchData: ACTION_REJECTED for match', matchId, 'reason:', parsedData.reason, 'message:', parsedData.message);
           this.emitMatchEvent('action_rejected', parsedData as ActionRejectPayload);
           break;
           
         default:
-          console.warn(`Unknown opCode received: ${opCode}`);
+          console.warn(`DEBUG handleMatchData: Unknown opCode received: ${opCode}`);
       }
     } catch (error) {
-      console.error('Error parsing match data:', error);
+      console.error('DEBUG handleMatchData: Error parsing match data:', error, {
+        data,
+        dataType: typeof data
+      });
     }
   }
 
@@ -263,6 +362,36 @@ class NakamaClient {
     }
     this.session = null;
     this.setConnectionState('disconnected');
+  }
+
+  private parseRpcPayload<T>(payload: unknown, rpcName: string): T {
+    // nakama-js already JSON.parses ApiRpc.payload into an object. However, be tolerant
+    // if we ever receive a string payload (e.g. different client version).
+    if (payload == null) {
+      throw new Error(`${rpcName} returned empty payload`);
+    }
+    if (typeof payload === 'string') {
+      return JSON.parse(payload) as T;
+    }
+    if (typeof payload === 'object') {
+      return payload as T;
+    }
+    throw new Error(`${rpcName} returned non-JSON payload type: ${typeof payload}`);
+  }
+
+  private formatErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message || 'Unknown error';
+    if (typeof error === 'string') return error;
+    if (error && typeof error === 'object') {
+      const maybeMessage = (error as any).message;
+      if (typeof maybeMessage === 'string' && maybeMessage.trim()) return maybeMessage;
+      try {
+        return JSON.stringify(error);
+      } catch {
+        return 'Unknown error';
+      }
+    }
+    return 'Unknown error';
   }
 
   // Real RPC methods
@@ -287,7 +416,7 @@ class NakamaClient {
       };
       
       const result = await this.client.rpc(this.session, 'quick_play', payload as any);
-      const rpcResult: QuickPlayRpcResult = JSON.parse(result.payload as unknown as string);
+      const rpcResult: QuickPlayRpcResult = this.parseRpcPayload(result.payload, 'quick_play');
       
       if (rpcResult.success) {
         return {
@@ -335,7 +464,7 @@ class NakamaClient {
       };
       
       const result = await this.client.rpc(this.session, 'create_room', payload as any);
-      const rpcResult: CreateRoomRpcResult = JSON.parse(result.payload as unknown as string);
+      const rpcResult: CreateRoomRpcResult = this.parseRpcPayload(result.payload, 'create_room');
       
       if (rpcResult.success) {
         return {
@@ -389,7 +518,7 @@ class NakamaClient {
       };
       
       const result = await this.client.rpc(this.session, 'join_room', payload as any);
-      const rpcResult: JoinRoomRpcResult = JSON.parse(result.payload as unknown as string);
+      const rpcResult: JoinRoomRpcResult = this.parseRpcPayload(result.payload, 'join_room');
       
       if (rpcResult.success) {
         return {
@@ -432,7 +561,7 @@ class NakamaClient {
 
     try {
       const result = await this.client.rpc(this.session, 'list_rooms', {} as any);
-      const rpcResult: ListRoomsRpcResult = JSON.parse(result.payload as unknown as string);
+      const rpcResult: ListRoomsRpcResult = this.parseRpcPayload(result.payload, 'list_rooms');
       
       if (rpcResult.success) {
         return {
@@ -458,8 +587,11 @@ class NakamaClient {
   }
 
   // Match join and gameplay methods
-  async joinMatch(matchId: string): Promise<ShellActionResult> {
+  async joinMatch(matchId: string, roomCode?: string): Promise<ShellActionResult> {
+    console.log('DEBUG joinMatch: called', { matchId, roomCode, connectionState: this.connectionState });
+    
     if (this.connectionState !== 'connected') {
+      console.log('DEBUG joinMatch: Not connected');
       return {
         success: false,
         message: 'Not connected to multiplayer service',
@@ -467,6 +599,7 @@ class NakamaClient {
     }
 
     if (!this.socket) {
+      console.log('DEBUG joinMatch: Socket not available');
       return {
         success: false,
         message: 'Socket not available',
@@ -475,40 +608,54 @@ class NakamaClient {
 
     try {
       // Join the match with metadata (nickname for backend)
-      const metadata = JSON.stringify({
+      const metadata = {
         nickname: this.identity?.nickname || 'Player'
+      };
+      console.log('DEBUG joinMatch: Joining with metadata', metadata);
+      const match = await this.socket.joinMatch(matchId, undefined, metadata as any);
+      console.log('DEBUG joinMatch: Successfully joined match', { 
+        matchId: match.match_id,
+        roomCode 
       });
-      const match = await this.socket.joinMatch(matchId, metadata);
       
       // Determine player symbol from match presence
       // playerSymbol will be set from state_sync
-      if (match.presences) {
-        // We'll determine symbol from state_sync after joining
-        // For now, set context with null symbol
-        this.activeMatchContext = {
-          matchId: match.match_id,
-          roomCode: '', // Will be updated from state_sync
-          playerSymbol: null
-        };
-        
-        this.emitMatchEvent('match_joined', { matchId: match.match_id });
-      }
+      // We'll determine symbol from state_sync after joining.
+      this.activeMatchContext = {
+        matchId: match.match_id,
+        roomCode: roomCode || '', // Will be updated from state_sync if empty
+        playerSymbol: null
+      };
+      console.log('DEBUG joinMatch: Set activeMatchContext', this.activeMatchContext);
+      this.emitMatchEvent('match_joined', { matchId: match.match_id });
       
       return {
         success: true,
         message: 'Joined match',
       };
     } catch (error) {
-      console.error('Join match error:', error);
+      console.error('DEBUG joinMatch: Error joining match:', error);
       return {
         success: false,
-        message: `Failed to join match: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Failed to join match: ${this.formatErrorMessage(error)}`,
       };
     }
   }
 
   async sendMoveIntent(index: number): Promise<ShellActionResult> {
+    console.log('DEBUG sendMoveIntent: called with index=', index, 'type=', typeof index);
+    
+    // Validate index is a valid number between 0-8
+    if (typeof index !== 'number' || index < 0 || index > 8 || !Number.isInteger(index)) {
+      console.error('DEBUG sendMoveIntent: Invalid index', { index, type: typeof index });
+      return {
+        success: false,
+        message: 'Invalid cell index',
+      };
+    }
+
     if (this.connectionState !== 'connected') {
+      console.log('DEBUG sendMoveIntent: Not connected, state=', this.connectionState);
       return {
         success: false,
         message: 'Not connected to multiplayer service',
@@ -516,6 +663,7 @@ class NakamaClient {
     }
 
     if (!this.socket) {
+      console.log('DEBUG sendMoveIntent: Socket not available');
       return {
         success: false,
         message: 'Socket not available',
@@ -523,6 +671,7 @@ class NakamaClient {
     }
 
     if (!this.activeMatchContext?.matchId) {
+      console.log('DEBUG sendMoveIntent: No active match context', { activeMatchContext: this.activeMatchContext });
       return {
         success: false,
         message: 'Not in a match',
@@ -531,18 +680,30 @@ class NakamaClient {
 
     try {
       const payload: MoveIntentPayload = { index };
+      const payloadStr = JSON.stringify(payload);
+      console.log('DEBUG sendMoveIntent: Sending move', {
+        matchId: this.activeMatchContext.matchId,
+        opCode: 1,
+        payload: payloadStr,
+        payloadObj: payload
+      });
+      
+      // Convert string to Uint8Array for reliable transmission
+      const data = stringToUint8Array(payloadStr);
+      
       await this.socket.sendMatchState(
         this.activeMatchContext.matchId,
         1, // OP_CODE_MOVE_INTENT
-        JSON.stringify(payload)
+        data // Send as Uint8Array instead of string
       );
       
+      console.log('DEBUG sendMoveIntent: Move sent successfully');
       return {
         success: true,
         message: 'Move sent',
       };
     } catch (error) {
-      console.error('Send move error:', error);
+      console.error('DEBUG sendMoveIntent: Error sending move:', error);
       return {
         success: false,
         message: `Failed to send move: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -551,21 +712,37 @@ class NakamaClient {
   }
 
   leaveMatch(): void {
+    console.log('DEBUG leaveMatch: called', { 
+      activeMatchContext: this.activeMatchContext,
+      hasSocket: !!this.socket 
+    });
+    
     if (this.activeMatchContext?.matchId && this.socket) {
       try {
+        console.log('DEBUG leaveMatch: Leaving match', this.activeMatchContext.matchId);
         this.socket.leaveMatch(this.activeMatchContext.matchId);
       } catch (error) {
-        console.error('Leave match error:', error);
+        console.error('DEBUG leaveMatch: Error leaving match:', error);
       }
     }
     
+    console.log('DEBUG leaveMatch: Clearing activeMatchContext');
     this.activeMatchContext = null;
     this.emitMatchEvent('match_left', {});
   }
 
   // Update match context from state sync
   updateMatchContextFromState(state: PublicMatchState): void {
+    console.log('DEBUG updateMatchContextFromState: called', { 
+      stateMatchId: state.matchId,
+      activeMatchId: this.activeMatchContext?.matchId,
+      userId: this.session?.user_id,
+      playerXUserId: state.playerX?.userId,
+      playerOUserId: state.playerO?.userId
+    });
+    
     if (!this.activeMatchContext || this.activeMatchContext.matchId !== state.matchId) {
+      console.log('DEBUG updateMatchContextFromState: Skipping - no active match or different match');
       return;
     }
 
@@ -577,12 +754,19 @@ class NakamaClient {
     if (userId) {
       if (state.playerX?.userId === userId) {
         this.activeMatchContext.playerSymbol = 'X';
+        console.log('DEBUG updateMatchContextFromState: Set playerSymbol to X');
       } else if (state.playerO?.userId === userId) {
         this.activeMatchContext.playerSymbol = 'O';
+        console.log('DEBUG updateMatchContextFromState: Set playerSymbol to O');
       } else {
         this.activeMatchContext.playerSymbol = null;
+        console.log('DEBUG updateMatchContextFromState: Set playerSymbol to null (user not found in match)');
       }
+    } else {
+      console.log('DEBUG updateMatchContextFromState: No userId available');
     }
+    
+    console.log('DEBUG updateMatchContextFromState: Updated context', this.activeMatchContext);
   }
 
   // Utility methods

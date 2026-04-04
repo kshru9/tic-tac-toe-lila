@@ -62,6 +62,11 @@ function Board({ board, disabled = false, onCellClick, winningLine = null }: Boa
     if (disabled || board[index] !== null || !onCellClick) {
       return;
     }
+    // Ensure index is valid
+    if (typeof index !== 'number' || index < 0 || index >= board.length) {
+      console.error('Invalid cell index in Board:', index);
+      return;
+    }
     onCellClick(index);
   };
 
