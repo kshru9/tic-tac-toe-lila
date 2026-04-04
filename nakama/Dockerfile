@@ -14,8 +14,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install ALL dependencies (including dev dependencies for TypeScript)
+RUN npm ci
 
 # Copy source files
 COPY src/ ./src/

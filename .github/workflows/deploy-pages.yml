@@ -49,8 +49,10 @@ jobs:
           VITE_BASE_PATH: ${{ github.event.repository.name }}
         run: npm run build
 
-      - name: Setup Pages
+      - name: Setup Pages (with enablement)
         uses: actions/configure-pages@v4
+        with:
+          enablement: true  # This will enable Pages if not already enabled
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

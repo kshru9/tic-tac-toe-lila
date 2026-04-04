@@ -315,22 +315,23 @@ This repository is configured for deployment to:
 
 **Prerequisites:**
 - GitHub repository
-- GitHub Pages enabled in repository settings
 
 **Steps:**
 1. Push repository changes to GitHub
-2. Configure GitHub Pages:
-   - Source: GitHub Actions
-   - Branch: `main`
-3. Set repository Actions variables:
-   - `VITE_NAKAMA_HOST`: Your Railway public domain (e.g., `nakama-production.up.railway.app`)
-   - `VITE_NAKAMA_USE_SSL`: `true`
-   - `VITE_NAKAMA_SERVER_KEY`: Same secure key used in Railway
-   - `VITE_BASE_PATH`: Repository name (for project Pages URLs)
-4. The GitHub Actions workflow will:
+2. **The GitHub Actions workflow will automatically:**
+   - Enable GitHub Pages if not already enabled
    - Build frontend with correct base path
    - Deploy to GitHub Pages
-   - Provide public URL: `https://username.github.io/repo-name/`
+3. Set repository Actions variables (required before workflow runs):
+   - Go to repository → Settings → Secrets and variables → Actions
+   - Add variables:
+     - `VITE_NAKAMA_HOST`: Your Railway public domain
+     - `VITE_NAKAMA_USE_SSL`: `true`
+     - `VITE_NAKAMA_SERVER_KEY`: Same secure key used in Railway
+     - `VITE_BASE_PATH`: Repository name (e.g., `tic-tac-toe`)
+4. After deployment, get your public URL:
+   - Go to repository → Settings → Pages
+   - URL: `https://username.github.io/repo-name/`
 
 #### 3. Connect Frontend to Backend
 
