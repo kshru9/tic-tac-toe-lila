@@ -88,7 +88,15 @@ lila-tictactoe/
    ```
    Review the `.env` file and update values if needed for your local setup.
 
-3. **Start the local infrastructure**:
+3. **Build the Nakama runtime module** (required before starting):
+   ```bash
+   cd nakama
+   npm install
+   npm run build
+   cd ..
+   ```
+
+4. **Start the local infrastructure**:
    ```bash
    docker-compose up
    ```
@@ -96,14 +104,14 @@ lila-tictactoe/
    - PostgreSQL database (port 5432)
    - Nakama server with TypeScript runtime (HTTP API: port 7350, WebSocket: port 7350)
 
-4. **In a separate terminal, start the frontend**:
+5. **In a separate terminal, start the frontend**:
    ```bash
    cd web
    npm install
    npm run dev
    ```
 
-5. **Open your browser** to the URL shown by Vite (typically `http://localhost:5173`).
+6. **Open your browser** to the URL shown by Vite (typically `http://localhost:5173`).
 
 ### Alternative: Use the development helper script
 
@@ -247,9 +255,79 @@ This balances gameplay integrity with real-world network reliability.
 2. Player 2 uses "Room Discovery" to find and join the room
 3. Game starts when Player 2 joins
 
-## Deployment Process
+## Deployment Process (Railway + GitHub Pages)
 
-### Deployment Split
+### Locked Provider Choice
+
+This repository is configured for deployment to:
+
+1. **Frontend**: GitHub Pages (static hosting)
+2. **Backend**: Railway (Nakama server with PostgreSQL)
+3. **Database**: Railway PostgreSQL
+
+### Production Requirements
+
+**Browser-safe production deployment requires:**
+- HTTPS/WSS connections (TLS certificates) - Provided automatically by Railway and GitHub Pages
+- CORS configuration on Nakama for your GitHub Pages domain
+- Secure server key (not `defaultkey`)
+- Railway public networking for Nakama HTTPS/WSS exposure
+
+**Railway provides automatic TLS certificates and public networking.**
+
+### Configuration Steps
+
+1. **Build Nakama Runtime Module** (required before deployment):
+   ```bash
+   cd nakama
+   npm install
+   npm run build
+   ```
+   The built module will be in `nakama/build/index.js`
+
+2. **Deploy Nakama Server**:
+   - Set up PostgreSQL database
+   - Deploy Nakama with the built runtime module
+   - Configure TLS/SSL certificates via reverse proxy
+   - Configure CORS to allow your frontend domain
+   - Set secure server key (not `defaultkey`)
+
+3. **Build and Deploy Frontend**:
+   ```bash
+   cd web
+   npm install
+   npm run build
+   ```
+   Build output: `web/dist/` directory containing static assets
+   - Upload the `dist/` folder to your static host
+   - Configure environment variables for production
+
+4. **Update Environment Variables**:
+   - Set `VITE_NAKAMA_HOST` to your deployed Nakama server hostname (REQUIRED - no fallback)
+   - Set `VITE_NAKAMA_USE_SSL` to `true` (requires TLS termination)
+   - Use your production server key (not `defaultkey`)
+   - Rebuild frontend with updated environment
+
+### Local vs Deployed Environment Differences
+
+| Environment | Nakama Host | SSL | Server Key | Purpose |
+|-------------|-------------|-----|------------|---------|
+| Local | `[private-host-redacted]` (must be set in .env) | `false` | `defaultkey` | Development |
+| Production | Your domain | `true` | Secure key | Live gameplay |
+
+## Submission-Time Values to Provide
+
+**Before submission, fill in these values:**
+
+- **Public Frontend URL**: `[TO BE PROVIDED BEFORE SUBMISSION]`
+- **Deployed Nakama Endpoint**: `[TO BE PROVIDED BEFORE SUBMISSION]`
+
+**Environment notes for reviewers:**
+- Local development uses the values in `.env.example`
+- Production deployment requires secure, non-default values
+- The frontend requires `VITE_NAKAMA_HOST` to be explicitly set (no fallback)
+- The application has not been deployed to production in this workflow
+## Deployment Split
 
 This application requires two deployment targets:
 
@@ -260,8 +338,12 @@ This application requires two deployment targets:
 
 1. **Deploy Nakama Server**:
    - Set up PostgreSQL database
-   - Deploy Nakama with the TypeScript runtime module
-   - Configure SSL certificates
+   - Build the TypeScript runtime module: 
+> nakama-runtime@1.0.0 build
+> tsc -p tsconfig.json
+   - Deploy Nakama with the built runtime module
+   - Configure TLS/SSL certificates (requires reverse proxy like nginx, traefik, or cloud provider TLS)
+   - Configure CORS to allow your frontend domain
    - Set secure server key (not `defaultkey`)
 
 2. **Build and Deploy Frontend**:
@@ -273,9 +355,10 @@ This application requires two deployment targets:
    - Configure environment variables for production
 
 3. **Update Environment Variables**:
-   - Set `VITE_NAKAMA_HOST` to your deployed Nakama server hostname
-   - Set `VITE_NAKAMA_USE_SSL` to `true`
-   - Use your production server key
+   - Set  to your deployed Nakama server hostname (REQUIRED - no fallback)
+   - Set  to  (requires TLS termination)
+   - Use your production server key (not )
+   - Configure CORS on Nakama for your frontend domain
    - Rebuild frontend with updated environment
 
 ### Local vs Deployed Environment Differences

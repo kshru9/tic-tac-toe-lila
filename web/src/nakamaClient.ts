@@ -22,7 +22,7 @@ import {
 
 // Configuration from environment
 const config = {
-  host: (import.meta as any).env.VITE_NAKAMA_HOST || 'localhost',
+  host: (import.meta as any).env.VITE_NAKAMA_HOST,
   port: parseInt((import.meta as any).env.VITE_NAKAMA_PORT || '7350'),
   serverKey: (import.meta as any).env.VITE_NAKAMA_SERVER_KEY || 'defaultkey',
   useSSL: (import.meta as any).env.VITE_NAKAMA_USE_SSL === 'true',
@@ -295,14 +295,15 @@ class NakamaClient {
       hasActiveContext: !!this.activeMatchContext
     });
     
-    // Only process if this is our active match
+    // If we don't have an active match context for this match, create one
+    // This handles the race condition where state_sync arrives before joinMatch completes
     if (!this.activeMatchContext || this.activeMatchContext.matchId !== matchId) {
-      console.log('DEBUG handleMatchData: Ignoring - no active match or different match', {
-        activeMatchId: this.activeMatchContext?.matchId,
-        receivedMatchId: matchId,
-        match: this.activeMatchContext?.matchId === matchId
-      });
-      return;
+      console.log('DEBUG handleMatchData: Creating/updating activeMatchContext for match', matchId);
+      this.activeMatchContext = {
+        matchId,
+        roomCode: '', // Will be updated from state_sync
+        playerSymbol: null
+      };
     }
 
     try {
@@ -741,9 +742,15 @@ class NakamaClient {
       playerOUserId: state.playerO?.userId
     });
     
+    // If we don't have an active match context for this match, create one
+    // This handles the race condition where state_sync arrives before joinMatch completes
     if (!this.activeMatchContext || this.activeMatchContext.matchId !== state.matchId) {
-      console.log('DEBUG updateMatchContextFromState: Skipping - no active match or different match');
-      return;
+      console.log('DEBUG updateMatchContextFromState: Creating/updating activeMatchContext for match', state.matchId);
+      this.activeMatchContext = {
+        matchId: state.matchId,
+        roomCode: state.roomCode,
+        playerSymbol: null
+      };
     }
 
     // Update room code

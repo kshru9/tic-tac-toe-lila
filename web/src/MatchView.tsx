@@ -267,7 +267,8 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
 
   function getPlayerDisplayName(player: typeof matchState.playerX, isYou: boolean): string {
     if (!player) return 'Waiting...';
-    return isYou ? `${player.nickname} (You)` : player.nickname;
+    const nickname = player.nickname?.trim() || 'Player';
+    return isYou ? `${nickname} (You)` : nickname;
   }
 
   function getStatusText(): string {

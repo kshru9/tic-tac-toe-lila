@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ./web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./web
+        env:
+          VITE_NAKAMA_HOST: ${{ vars.VITE_NAKAMA_HOST || 'nakama.example.com' }}
+          VITE_NAKAMA_PORT: ${{ vars.VITE_NAKAMA_PORT || '7350' }}
+          VITE_NAKAMA_SERVER_KEY: ${{ vars.VITE_NAKAMA_SERVER_KEY || 'defaultkey' }}
+          VITE_NAKAMA_USE_SSL: ${{ vars.VITE_NAKAMA_USE_SSL || 'true' }}
+          VITE_NAKAMA_WEBSOCKET_PORT: ${{ vars.VITE_NAKAMA_WEBSOCKET_PORT || '7350' }}
+          VITE_APP_TITLE: ${{ vars.VITE_APP_TITLE || 'LILA Tic-Tac-Toe' }}
+          VITE_BASE_PATH: ${{ github.event.repository.name }}
+        run: npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './web/dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
