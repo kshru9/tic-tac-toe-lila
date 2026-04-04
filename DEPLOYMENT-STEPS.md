@@ -23,14 +23,26 @@
 3. Set **Root Directory** to: `/nakama`
 4. Click "Deploy"
 
-#### Step 4: Configure Variables
-Go to Nakama service → Variables tab, add:
+#### Step 4: Configure Variables (CRITICAL - Fix Database Error)
+Go to Nakama service → Variables tab:
+
+1. **DELETE ALL existing variables**
+2. Add ONLY these variables:
 
 ```
-DATABASE_URL = postgresql://postgres:gIvfgULhzuPvvAbVfsUMFinQCmmixRrB@postgres.railway.internal:5432/railway
+DATABASE_URL = postgres://postgres:gIvfgULhzuPvvAbVfsUMFinQCmmixRrB@postgres.railway.internal:5432/railway
 NAKAMA_RUNTIME_PATH = /nakama/data/modules
-NAKAMA_SERVER_KEY = [GENERATE WITH: openssl rand -base64 32]
-NAKAMA_CORS_ORIGIN = https://nakama-YOUR-DOMAIN.up.railway.app
+NAKAMA_SERVER_KEY = [GENERATE: openssl rand -base64 32]
+```
+
+**Important**: Use `postgres://` protocol (not `postgresql://`)
+
+**Important**: Do NOT add `VITE_*` variables here (they go in GitHub Actions)
+
+3. **Generate secure key**:
+```bash
+openssl rand -base64 32
+# Example: aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789+abcd=
 ```
 
 #### Step 5: Get Public Domain
@@ -55,13 +67,16 @@ git push origin main
 #### Step 2: Set GitHub Actions Variables
 1. GitHub repo → Settings → Secrets and variables → Actions
 2. Variables tab → New repository variable
-3. Add:
+3. Add these variables (NOT in Railway):
 
 ```
-VITE_NAKAMA_HOST = nakama-production.up.railway.app
+VITE_NAKAMA_HOST = [YOUR_RAILWAY_DOMAIN].up.railway.app
 VITE_NAKAMA_USE_SSL = true
-VITE_NAKAMA_SERVER_KEY = [SAME_KEY_AS_RAILWAY]
+VITE_NAKAMA_SERVER_KEY = [SAME_SECURE_KEY_AS_RAILWAY]
 VITE_BASE_PATH = tic-tac-toe
+VITE_APP_TITLE = LILA Tic-Tac-Toe
+VITE_NAKAMA_PORT = 7350
+VITE_NAKAMA_WEBSOCKET_PORT = 7350
 ```
 
 #### Step 3: Monitor Deployment

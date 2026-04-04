@@ -301,11 +301,13 @@ This repository is configured for deployment to:
 - Also includes `nakama/start.sh` for Railway compatibility
 - Set Root Directory to `/nakama` in service settings
 
-4. Configure environment variables:
-   - `DATABASE_URL`: Reference from PostgreSQL service
-   - `NAKAMA_RUNTIME_PATH`: `/nakama/data/modules`
-   - Generate a secure `NAKAMA_SERVER_KEY` (not `defaultkey`)
-   - Set `NAKAMA_CORS_ORIGIN`: Your GitHub Pages URL (e.g., `https://username.github.io/repo-name/`)
+4. Configure environment variables (CRITICAL):
+   - **Delete all existing variables first**
+   - Add ONLY these to Nakama service:
+     - `DATABASE_URL`: `postgresql://postgres:gIvfgULhzuPvvAbVfsUMFinQCmmixRrB@postgres.railway.internal:5432/railway`
+     - `NAKAMA_RUNTIME_PATH`: `/nakama/data/modules`
+     - `NAKAMA_SERVER_KEY`: Generate secure key (e.g., `openssl rand -base64 32`)
+   - **Do NOT add `VITE_*` variables here** (they go in GitHub Actions)
 5. Railway will automatically:
    - Build the Docker image with embedded runtime module
    - Deploy with public HTTPS domain
