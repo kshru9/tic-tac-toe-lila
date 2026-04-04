@@ -5,10 +5,16 @@ echo "=== Starting Nakama (Simple) ==="
 
 # Debug: Show environment
 echo "Environment:"
-env | grep -E "(DATABASE|NAKAMA)" || echo "No env vars found"
+env | grep -E "(DATABASE|POSTGRES|PG|NAKAMA)" || echo "No env vars found"
 
-# Use provided DATABASE_URL or default
-DB="${DATABASE_URL:-postgres://postgres:password@localhost:5432/nakama}"
+# Check for database connection
+if [ -z "$DATABASE_URL" ]; then
+    echo "❌ ERROR: DATABASE_URL not set!"
+    echo "Set DATABASE_URL environment variable"
+    exit 1
+fi
+
+DB="$DATABASE_URL"
 
 echo "Database: $DB"
 echo "Runtime path: ${NAKAMA_RUNTIME_PATH:-/nakama/data/modules}"

@@ -65,5 +65,6 @@ exec /nakama/nakama \
   --name "nakama" \
   --socket.server_key "${NAKAMA_SERVER_KEY:-defaultkey}" \
   --logger.level "debug" \
-  --database.conn_max_lifetime "60s" \
-  --database.max_open_conns "50"
+  --database.conn_max_lifetime_ms "60000" \
+  --database.max_open_conns "50" \
+  --database.max_idle_conns "10"
