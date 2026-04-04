@@ -39,10 +39,12 @@ lila-tictactoe/
 ├── .env.example               # Environment variable template
 ├── .gitignore                 # Git ignore rules
 ├── docker-compose.yml         # Local development infrastructure
+├── railway.json               # Railway deployment configuration
 ├── nakama/                    # Nakama TypeScript runtime
 │   ├── Dockerfile            # Nakama server with runtime build
 │   ├── package.json          # Runtime dependencies
 │   ├── tsconfig.json         # TypeScript configuration
+│   ├── start.sh              # Railway start script
 │   └── src/
 │       ├── index.ts          # Runtime module initialization
 │       ├── rpc.ts            # Room creation/joining RPC endpoints
@@ -61,6 +63,8 @@ lila-tictactoe/
 │       ├── Lobby.tsx         # Lobby interface
 │       ├── MatchView.tsx     # Game board and match interface
 │       └── Board.tsx         # Tic-Tac-Toe board component
+├── .github/workflows/         # GitHub Actions workflows
+│   └── deploy-pages.yml      # GitHub Pages deployment
 └── scripts/
     ├── dev.sh                # Local development helper
     └── deploy.sh             # Deployment guidance
@@ -275,45 +279,74 @@ This repository is configured for deployment to:
 
 **Railway provides automatic TLS certificates and public networking.**
 
-### Configuration Steps
+### Railway + GitHub Pages Deployment Steps
 
-1. **Build Nakama Runtime Module** (required before deployment):
-   ```bash
-   cd nakama
-   npm install
-   npm run build
-   ```
-   The built module will be in `nakama/build/index.js`
+#### 1. Deploy Nakama Backend to Railway
 
-2. **Deploy Nakama Server**:
-   - Set up PostgreSQL database
-   - Deploy Nakama with the built runtime module
-   - Configure TLS/SSL certificates via reverse proxy
-   - Configure CORS to allow your frontend domain
-   - Set secure server key (not `defaultkey`)
+**Prerequisites:**
+- Railway account
+- GitHub repository connected to Railway
 
-3. **Build and Deploy Frontend**:
-   ```bash
-   cd web
-   npm install
-   npm run build
-   ```
-   Build output: `web/dist/` directory containing static assets
-   - Upload the `dist/` folder to your static host
-   - Configure environment variables for production
+**Steps:**
+1. Create a new Railway project
+2. Add a PostgreSQL service (Railway will provide `DATABASE_URL`)
+3. Add a new service from GitHub repository
+   - Source: Your GitHub repository
+   - **Important**: After adding, set **Root Directory** to `/nakama`
+   - Build Command: Auto-detected from Dockerfile
+   - Start Command: Auto-detected from start.sh
 
-4. **Update Environment Variables**:
-   - Set `VITE_NAKAMA_HOST` to your deployed Nakama server hostname (REQUIRED - no fallback)
-   - Set `VITE_NAKAMA_USE_SSL` to `true` (requires TLS termination)
-   - Use your production server key (not `defaultkey`)
-   - Rebuild frontend with updated environment
+**Note**: If Railway shows "Railpack could not determine how to build the app":
+- The repository includes `railway.json` to specify Dockerfile location
+- Also includes `nakama/start.sh` for Railway compatibility
+- Set Root Directory to `/nakama` in service settings
 
-### Local vs Deployed Environment Differences
+4. Configure environment variables:
+   - `DATABASE_URL`: Reference from PostgreSQL service
+   - `NAKAMA_RUNTIME_PATH`: `/nakama/data/modules`
+   - Generate a secure `NAKAMA_SERVER_KEY` (not `defaultkey`)
+   - Set `NAKAMA_CORS_ORIGIN`: Your GitHub Pages URL (e.g., `https://username.github.io/repo-name/`)
+5. Railway will automatically:
+   - Build the Docker image with embedded runtime module
+   - Deploy with public HTTPS domain
+   - Provide automatic TLS certificates
 
-| Environment | Nakama Host | SSL | Server Key | Purpose |
-|-------------|-------------|-----|------------|---------|
-| Local | `[private-host-redacted]` (must be set in .env) | `false` | `defaultkey` | Development |
-| Production | Your domain | `true` | Secure key | Live gameplay |
+#### 2. Deploy Frontend to GitHub Pages
+
+**Prerequisites:**
+- GitHub repository
+- GitHub Pages enabled in repository settings
+
+**Steps:**
+1. Push repository changes to GitHub
+2. Configure GitHub Pages:
+   - Source: GitHub Actions
+   - Branch: `main`
+3. Set repository Actions variables:
+   - `VITE_NAKAMA_HOST`: Your Railway public domain (e.g., `nakama-production.up.railway.app`)
+   - `VITE_NAKAMA_USE_SSL`: `true`
+   - `VITE_NAKAMA_SERVER_KEY`: Same secure key used in Railway
+   - `VITE_BASE_PATH`: Repository name (for project Pages URLs)
+4. The GitHub Actions workflow will:
+   - Build frontend with correct base path
+   - Deploy to GitHub Pages
+   - Provide public URL: `https://username.github.io/repo-name/`
+
+#### 3. Connect Frontend to Backend
+
+1. Update CORS in Railway Nakama service:
+   - Set `NAKAMA_CORS_ORIGIN` to your GitHub Pages URL
+2. Test connection:
+   - Open GitHub Pages URL
+   - Verify connection status shows "connected"
+   - Create/join a game room
+
+### Environment Configuration
+
+| Environment | Nakama Host | SSL | Server Key | Base Path | Purpose |
+|-------------|-------------|-----|------------|-----------|---------|
+| Local | `[private-host-redacted]` | `false` | `defaultkey` | `/` | Development |
+| Railway + GitHub Pages | Railway domain | `true` | Secure key | `/repo-name/` | Production |
 
 ## Submission-Time Values to Provide
 
