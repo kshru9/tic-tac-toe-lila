@@ -26,6 +26,10 @@ RUN npm run build
 # Copy built module to Nakama runtime path
 RUN cp build/index.js /nakama/data/modules/
 
+# Copy and make startup script executable
+COPY start-railway.sh /nakama/
+RUN chmod +x /nakama/start-railway.sh
+
 # Set working directory back to Nakama default
 WORKDIR /nakama
 

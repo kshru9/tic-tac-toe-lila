@@ -4,7 +4,7 @@
     "dockerfilePath": "nakama/Dockerfile"
   },
   "deploy": {
-    "startCommand": "",
+    "startCommand": "./start-railway.sh",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",

@@ -27,15 +27,19 @@
 Go to Nakama service → Variables tab:
 
 1. **DELETE ALL existing variables**
-2. Add ONLY these variables:
+2. Add reference variables from Postgres service (RECOMMENDED):
 
 ```
-DATABASE_URL = postgres://postgres:gIvfgULhzuPvvAbVfsUMFinQCmmixRrB@postgres.railway.internal:5432/railway
+PGHOST = ${{Postgres.PGHOST}}
+PGPORT = ${{Postgres.PGPORT}}
+PGUSER = ${{Postgres.PGUSER}}
+PGPASSWORD = ${{Postgres.PGPASSWORD}}
+PGDATABASE = ${{Postgres.PGDATABASE}}
 NAKAMA_RUNTIME_PATH = /nakama/data/modules
 NAKAMA_SERVER_KEY = [GENERATE: openssl rand -base64 32]
 ```
 
-**Important**: Use `postgres://` protocol (not `postgresql://`)
+**Important**: Replace `Postgres` with your actual Postgres service name in Railway
 
 **Important**: Do NOT add `VITE_*` variables here (they go in GitHub Actions)
 
@@ -45,11 +49,26 @@ openssl rand -base64 32
 # Example: aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789+abcd=
 ```
 
+**Alternative**: If reference variables don't work, use DATABASE_URL directly:
+```
+DATABASE_URL = postgres://[USER]:[PASSWORD]@[HOST]:[PORT]/[DATABASE]?sslmode=disable
+NAKAMA_RUNTIME_PATH = /nakama/data/modules
+NAKAMA_SERVER_KEY = [GENERATE: openssl rand -base64 32]
+```
+Get the connection string from Postgres service → Connect → Private Network
+
 #### Step 5: Get Public Domain
 1. Nakama service → Settings → Networking
 2. Note domain: `nakama-production.up.railway.app`
 
 #### Step 6: Verify
+1. **Check Railway logs** for:
+   - "✅ Found Railway Postgres service variables" or "✅ Using DATABASE_URL variable"
+   - "Running database migrations..." and migration success
+   - "Starting Nakama server..."
+   - No "Error pinging database" messages
+
+2. **Test health endpoint**:
 ```bash
 curl https://nakama-production.up.railway.app/health
 # Should return: {"status":"healthy","service":"tic-tac-toe",...}
