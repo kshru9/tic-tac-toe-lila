@@ -26,7 +26,7 @@ declare namespace nkruntime {
         matchSendData(matchId: string, opCode: number, data: string, presences?: Presence[] | null, sender?: Presence | null, reliable?: boolean): void;
         storageRead(objects: any[]): any[];
         storageWrite(objects: any[]): void;
-        storageList(userId: string, collection: string, key: string, limit: number, cursor?: string): { objects: any[]; cursor?: string };
+        storageList(userId: string, collection: string, limit: number, cursor?: string, callerId?: string): { objects: any[]; cursor?: string };
     }
 
     interface MatchList {

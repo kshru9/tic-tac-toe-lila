@@ -23,6 +23,7 @@ import {
   ResumeAttemptResult,
   GetLeaderboardResponse,
   GameMode,
+  seatUserIdFromSeat,
   OP_CODE_MOVE_INTENT,
   OP_CODE_STATE_SYNC,
   OP_CODE_ACTION_REJECTED,
@@ -1125,8 +1126,8 @@ class NakamaClient {
       stateMatchId: state.matchId,
       activeMatchId: this.activeMatchContext?.matchId,
       userId: this.session?.user_id,
-      playerXUserId: state.playerX?.userId,
-      playerOUserId: state.playerO?.userId
+      playerXUserId: seatUserIdFromSeat(state.playerX),
+      playerOUserId: seatUserIdFromSeat(state.playerO)
     });
     
     // If we don't have an active match context for this match, create one
@@ -1146,10 +1147,12 @@ class NakamaClient {
     // Determine player symbol
     const userId = this.session?.user_id;
     if (userId) {
-      if (state.playerX?.userId === userId) {
+      const xId = seatUserIdFromSeat(state.playerX);
+      const oId = seatUserIdFromSeat(state.playerO);
+      if (xId === userId) {
         this.activeMatchContext.playerSymbol = 'X';
         console.log('DEBUG updateMatchContextFromState: Set playerSymbol to X');
-      } else if (state.playerO?.userId === userId) {
+      } else if (oId === userId) {
         this.activeMatchContext.playerSymbol = 'O';
         console.log('DEBUG updateMatchContextFromState: Set playerSymbol to O');
       } else {

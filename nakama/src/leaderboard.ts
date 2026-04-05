@@ -1,10 +1,15 @@
 /**
- * Leaderboard persistence (collection "leaderboard", key "stats", per-user owner).
- * Read from RPC; writes only from authoritative match completion via commitMatchLeaderboardToStorage.
+ * Leaderboard persistence: single authoritative index object (system user) + RPC read.
+ * Writes only from authoritative match completion via commitMatchLeaderboardToStorage.
+ *
+ * Per-user storage + storageList("", ...) is unreliable for cross-user aggregation in Nakama;
+ * the index record lists all stats rows in one place.
  */
 
 var LEADERBOARD_COLLECTION = 'leaderboard';
-var LEADERBOARD_KEY = 'stats';
+/** Global index: one object owned by the system user */
+var LEADERBOARD_INDEX_KEY = 'stats_index';
+var LEADERBOARD_SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 interface LeaderboardStatsRow {
   userId: string;
@@ -18,19 +23,39 @@ interface LeaderboardStatsRow {
   updatedAt: number;
 }
 
+interface LeaderboardIndexValue {
+  entries: LeaderboardStatsRow[];
+}
+
 function leaderboardSanitizeNickname(nickname: string | null | undefined): string {
   var n = nickname != null ? String(nickname).trim() : '';
   return n.length > 0 ? n : 'Player';
 }
 
-function leaderboardReadUserStats(nk: nkruntime.Nakama, userId: string): LeaderboardStatsRow | null {
+function leaderboardReadIndexEntries(nk: nkruntime.Nakama): LeaderboardStatsRow[] {
   try {
-    var objects = nk.storageRead([{ collection: LEADERBOARD_COLLECTION, key: LEADERBOARD_KEY, userId: userId }]);
-    if (!objects || objects.length === 0) return null;
-    return objects[0].value as LeaderboardStatsRow;
+    var objects = nk.storageRead([
+      { collection: LEADERBOARD_COLLECTION, key: LEADERBOARD_INDEX_KEY, userId: LEADERBOARD_SYSTEM_USER_ID }
+    ]);
+    if (!objects || objects.length === 0) return [];
+    var raw = objects[0].value as LeaderboardIndexValue;
+    if (!raw || !raw.entries || !Array.isArray(raw.entries)) return [];
+    var out: LeaderboardStatsRow[] = [];
+    for (var i = 0; i < raw.entries.length; i++) {
+      var e = raw.entries[i];
+      if (e && e.userId) out.push(e);
+    }
+    return out;
   } catch (_e) {
-    return null;
+    return [];
   }
+}
+
+function leaderboardFindEntry(entries: LeaderboardStatsRow[], userId: string): LeaderboardStatsRow | null {
+  for (var i = 0; i < entries.length; i++) {
+    if (entries[i].userId === userId) return entries[i];
+  }
+  return null;
 }
 
 function leaderboardEmptyRow(userId: string, nickname: string): LeaderboardStatsRow {
@@ -47,20 +72,9 @@ function leaderboardEmptyRow(userId: string, nickname: string): LeaderboardStats
   };
 }
 
-function leaderboardToWriteObject(stats: LeaderboardStatsRow): any {
-  return {
-    collection: LEADERBOARD_COLLECTION,
-    key: LEADERBOARD_KEY,
-    userId: stats.userId,
-    value: stats,
-    permissionRead: 2,
-    permissionWrite: 0
-  };
-}
-
 /**
- * Apply one competitive match outcome to storage for both seats. Single storageWrite batch.
- * Returns true if writes succeeded.
+ * Apply one competitive match outcome. Updates global index only.
+ * Returns true if write succeeded.
  */
 function commitMatchLeaderboardToStorage(
   nk: nkruntime.Nakama,
@@ -80,8 +94,9 @@ function commitMatchLeaderboardToStorage(
   var nickW = leaderboardSanitizeNickname(winnerNickname);
   var nickL = leaderboardSanitizeNickname(loserNickname);
 
-  var rowW = leaderboardReadUserStats(nk, winnerUserId) || leaderboardEmptyRow(winnerUserId, nickW);
-  var rowL = leaderboardReadUserStats(nk, loserUserId) || leaderboardEmptyRow(loserUserId, nickL);
+  var entries = leaderboardReadIndexEntries(nk);
+  var rowW = leaderboardFindEntry(entries, winnerUserId) || leaderboardEmptyRow(winnerUserId, nickW);
+  var rowL = leaderboardFindEntry(entries, loserUserId) || leaderboardEmptyRow(loserUserId, nickL);
 
   rowW.nickname = nickW;
   rowL.nickname = nickL;
@@ -103,27 +118,31 @@ function commitMatchLeaderboardToStorage(
     rowL.streak = 0;
   }
 
-  try {
-    nk.storageWrite([leaderboardToWriteObject(rowW), leaderboardToWriteObject(rowL)]);
-    return true;
-  } catch (e) {
-    logger.error('leaderboard: storageWrite failed: ' + (e != null ? String(e) : 'unknown'));
-    return false;
-  }
-}
-
-function leaderboardListAllStatRows(nk: nkruntime.Nakama): LeaderboardStatsRow[] {
-  try {
-    var result = nk.storageList('', LEADERBOARD_COLLECTION, LEADERBOARD_KEY, 1000);
-    if (!result || !result.objects) return [];
-    var out: LeaderboardStatsRow[] = [];
-    for (var i = 0; i < result.objects.length; i++) {
-      var v = result.objects[i].value as LeaderboardStatsRow;
-      if (v && v.userId) out.push(v);
+  var next: LeaderboardStatsRow[] = [];
+  for (var j = 0; j < entries.length; j++) {
+    var e = entries[j];
+    if (e.userId !== winnerUserId && e.userId !== loserUserId) {
+      next.push(e);
     }
-    return out;
-  } catch (_e) {
-    return [];
+  }
+  next.push(rowW);
+  next.push(rowL);
+
+  try {
+    nk.storageWrite([
+      {
+        collection: LEADERBOARD_COLLECTION,
+        key: LEADERBOARD_INDEX_KEY,
+        userId: LEADERBOARD_SYSTEM_USER_ID,
+        value: { entries: next } as LeaderboardIndexValue,
+        permissionRead: 2,
+        permissionWrite: 0
+      }
+    ]);
+    return true;
+  } catch (err) {
+    logger.error('leaderboard: storageWrite failed: ' + (err != null ? String(err) : 'unknown'));
+    return false;
   }
 }
 
@@ -133,7 +152,10 @@ function leaderboardRankRows(rows: LeaderboardStatsRow[]): LeaderboardStatsRow[]
     if (a.wins !== b.wins) return b.wins - a.wins;
     if (a.streak !== b.streak) return b.streak - a.streak;
     if (a.losses !== b.losses) return a.losses - b.losses;
-    return b.updatedAt - a.updatedAt;
+    if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
+    if (a.userId < b.userId) return -1;
+    if (a.userId > b.userId) return 1;
+    return 0;
   });
   return copy;
 }
@@ -152,7 +174,7 @@ function leaderboardBuildResponse(
   if (safeLimit > 100) safeLimit = 100;
   var safeOffset = offset < 0 ? 0 : offset;
 
-  var ranked = leaderboardRankRows(leaderboardListAllStatRows(nk));
+  var ranked = leaderboardRankRows(leaderboardReadIndexEntries(nk));
   var withRank: any[] = [];
   for (var r = 0; r < ranked.length; r++) {
     var row = ranked[r];

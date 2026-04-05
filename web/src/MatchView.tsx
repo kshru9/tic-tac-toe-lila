@@ -5,6 +5,7 @@ import {
   ConnectionState,
   UserFacingMoveRejectReason,
   UserFacingOutcomeReason,
+  seatUserIdFromSeat,
 } from './types';
 import Board from './Board';
 import { nakamaClient } from './nakamaClient';
@@ -161,8 +162,8 @@ function MatchView({
   function getPlayerSymbol(): PlayerSymbol | null {
     console.log('DEBUG getPlayerSymbol: called', {
       userId,
-      matchStatePlayerX: matchState.playerX?.userId,
-      matchStatePlayerO: matchState.playerO?.userId,
+      matchStatePlayerX: seatUserIdFromSeat(matchState.playerX),
+      matchStatePlayerO: seatUserIdFromSeat(matchState.playerO),
       matchStatePhase: matchState.phase,
     });
 
@@ -171,12 +172,15 @@ function MatchView({
       return null;
     }
 
-    // First check matchState (authoritative)
-    if (matchState.playerX?.userId === userId) {
+    const seatXId = seatUserIdFromSeat(matchState.playerX);
+    const seatOId = seatUserIdFromSeat(matchState.playerO);
+
+    // First check matchState (authoritative); accept camelCase or snake_case wire keys
+    if (seatXId === userId) {
       console.log('DEBUG getPlayerSymbol: Found X in matchState');
       return 'X';
     }
-    if (matchState.playerO?.userId === userId) {
+    if (seatOId === userId) {
       console.log('DEBUG getPlayerSymbol: Found O in matchState');
       return 'O';
     }

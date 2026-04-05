@@ -101,6 +101,16 @@ export interface PlayerSeatState {
   connected: boolean;
 }
 
+/** Resolve seat owner id from server JSON (camelCase or snake_case). */
+export function seatUserIdFromSeat(seat: PlayerSeatState | null | undefined): string | null {
+  if (!seat) return null;
+  const rec = seat as unknown as Record<string, unknown>;
+  const raw = rec.userId ?? rec.user_id;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  return s.length > 0 ? s : null;
+}
+
 // Match outcome reasons
 export type MatchOutcomeReason = 
   | 'win_row' 
