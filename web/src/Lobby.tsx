@@ -1,23 +1,29 @@
 import { useState, useEffect } from 'react';
+import QRCode from 'react-qr-code';
 import { nakamaClient } from './nakamaClient';
 import { ConnectionState, RoomSummary, RoomQueryIntent, GameMode } from './types';
 
 interface LobbyProps {
   onJoinMatch?: (matchId: string, roomCode?: string, mode?: GameMode) => void;
+  onOpenLeaderboard?: () => void;
   pendingDeepLinkRoomCode?: string | null;
   pendingDeepLinkMode?: GameMode;
   deepLinkJoinError?: string | null;
   isAttemptingDeepLinkJoin?: boolean;
   onRetryDeepLinkJoin?: () => void;
+  // Gamma 2: preserve mode when returning from match
+  initialMode?: GameMode;
 }
 
 function Lobby({ 
   onJoinMatch, 
+  onOpenLeaderboard,
   pendingDeepLinkRoomCode,
   pendingDeepLinkMode = 'classic',
   deepLinkJoinError,
   isAttemptingDeepLinkJoin = false,
-  onRetryDeepLinkJoin 
+  onRetryDeepLinkJoin,
+  initialMode = 'classic'
 }: LobbyProps) {
   const [roomCode, setRoomCode] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
@@ -28,7 +34,8 @@ function Lobby({
   const [connectionState, setConnectionState] = useState<ConnectionState>(nakamaClient.getConnectionState());
   const [createdRoomInfo, setCreatedRoomInfo] = useState<{ roomCode: string; matchId: string } | null>(null);
   const [roomQueryIntent, setRoomQueryIntent] = useState<RoomQueryIntent | null>(null);
-  const [selectedMode, setSelectedMode] = useState<GameMode>('classic');
+  const [selectedMode, setSelectedMode] = useState<GameMode>(initialMode);
+  const [qrSheetOpen, setQrSheetOpen] = useState(false);
 
   const nickname = nakamaClient.getNickname();
   const isConnected = connectionState === 'connected';
@@ -217,8 +224,21 @@ function Lobby({
   return (
     <div className="lobby">
       <div className="lobby__header">
-        <h2 className="lobby__welcome">Welcome, {nickname}!</h2>
-        <p className="lobby__tagline">Choose how you want to play</p>
+        <div className="lobby__header-row">
+          <div>
+            <h2 className="lobby__welcome">Welcome, {nickname}!</h2>
+            <p className="lobby__tagline">Choose how you want to play</p>
+          </div>
+          {onOpenLeaderboard && (
+            <button
+              type="button"
+              className="btn btn--tertiary lobby__leaderboard-btn"
+              onClick={onOpenLeaderboard}
+            >
+              Leaderboard
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Deep link join status */}
@@ -323,6 +343,15 @@ function Lobby({
                     onClick={() => copyToClipboard(getShareableUrl(createdRoomInfo.roomCode, selectedMode))}
                   >
                     Copy
+                  </button>
+                </div>
+                <div className="lobby-room-created__qr-row">
+                  <button
+                    type="button"
+                    className="btn btn--secondary btn--block"
+                    onClick={() => setQrSheetOpen(true)}
+                  >
+                    Show QR
                   </button>
                 </div>
               </div>
@@ -434,6 +463,45 @@ function Lobby({
       {!isConnected && (
         <div className="lobby-banner lobby-banner--error">
           You are not connected to the multiplayer service. Some features may be unavailable.
+        </div>
+      )}
+
+      {qrSheetOpen && createdRoomInfo && (
+        <div
+          className="lobby-qr-sheet-backdrop"
+          role="presentation"
+          onClick={() => setQrSheetOpen(false)}
+        >
+          <div
+            className="lobby-qr-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Room invite QR code"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="lobby-qr-sheet__head">
+              <span className="lobby-qr-sheet__title">Scan to join</span>
+              <button
+                type="button"
+                className="lobby-qr-sheet__close"
+                onClick={() => setQrSheetOpen(false)}
+                aria-label="Close QR"
+              >
+                ×
+              </button>
+            </div>
+            <p className="lobby-qr-sheet__room">Room {createdRoomInfo.roomCode}</p>
+            <div className="lobby-qr-sheet__qr">
+              <QRCode
+                value={getShareableUrl(createdRoomInfo.roomCode, selectedMode)}
+                size={200}
+                style={{ width: '100%', height: 'auto', maxWidth: 200 }}
+              />
+            </div>
+            <p className="lobby-qr-sheet__hint">
+              Opens the same link as above ({selectedMode} mode).
+            </p>
+          </div>
         </div>
       )}
     </div>

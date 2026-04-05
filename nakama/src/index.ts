@@ -2,7 +2,7 @@
  * Nakama runtime initialization for Tic-Tac-Toe
  * 
  * This module initializes the multiplayer game runtime.
- * Gamma 2 implements the authoritative multiplayer core.
+ * Gamma 3 adds leaderboard with streak tracking.
  */
 function InitModule(
   ctx: nkruntime.Context,
@@ -10,7 +10,7 @@ function InitModule(
   nk: nkruntime.Nakama,
   initializer: nkruntime.Initializer
 ) {
-  logger.info('Tic-Tac-Toe runtime module initializing (Gamma 2)');
+  logger.info('Tic-Tac-Toe runtime module initializing (Gamma 3)');
   
   // Register RPC endpoints
   initializer.registerRpc('health', healthRpc);
@@ -18,11 +18,12 @@ function InitModule(
   initializer.registerRpc('join_room', joinRoomRpc);
   initializer.registerRpc('list_rooms', listRoomsRpc);
   initializer.registerRpc('quick_play', quickPlayRpc);
+  initializer.registerRpc('get_leaderboard', getLeaderboardRpc);
   
   // Register match handler
   initializer.registerMatch('tic_tac_toe', matchHandler);
   
-  logger.info('Tic-Tac-Toe runtime module initialized (Gamma 2 multiplayer core)');
+  logger.info('Tic-Tac-Toe runtime module initialized (Gamma 3 with leaderboard)');
 }
 
 /**
@@ -32,7 +33,7 @@ function healthRpc(ctx: nkruntime.Context, logger: nkruntime.Logger, nk: nkrunti
   return JSON.stringify({
     status: 'healthy',
     service: 'tic-tac-toe',
-    stage: 'gamma-2-multiplayer-core',
+    stage: 'gamma-3-with-leaderboard',
     timestamp: Date.now()
   });
 }

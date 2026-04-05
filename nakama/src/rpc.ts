@@ -319,3 +319,48 @@ function quickPlayRpc(
     });
   }
 }
+
+// RPC: Get leaderboard (read-only)
+function getLeaderboardRpc(
+  ctx: nkruntime.Context,
+  logger: nkruntime.Logger,
+  nk: nkruntime.Nakama,
+  payload: string
+): string {
+  try {
+    let params: any = {};
+    try {
+      params = payload ? JSON.parse(payload) : {};
+    } catch (_parseErr) {
+      params = {};
+    }
+
+    let limit = 20;
+    let offset = 0;
+    if (typeof params.limit === 'number' && !isNaN(params.limit)) {
+      limit = params.limit;
+    }
+    if (typeof params.offset === 'number' && !isNaN(params.offset)) {
+      offset = params.offset;
+    }
+
+    const built = leaderboardBuildResponse(nk, ctx.userId || null, limit, offset);
+
+    return JSON.stringify({
+      success: true,
+      top: built.top,
+      self: built.self,
+      updatedAt: built.updatedAt
+    });
+  } catch (error) {
+    logger.error('getLeaderboardRpc error: ' + error);
+    return JSON.stringify({
+      success: false,
+      error: 'failed_to_get_leaderboard',
+      message: 'Failed to get leaderboard',
+      top: [],
+      self: null,
+      updatedAt: Date.now()
+    });
+  }
+}

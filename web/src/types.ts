@@ -19,6 +19,13 @@ export type MatchPhase =
   | 'reconnect_grace' 
   | 'completed';
 
+// Match opcodes (backend contract)
+export const OP_CODE_MOVE_INTENT = 1;
+export const OP_CODE_STATE_SYNC = 2;
+export const OP_CODE_ACTION_REJECTED = 3;
+export const OP_CODE_REMATCH_REQUEST = 4;
+export const OP_CODE_REMATCH_ACCEPT = 5;
+
 // Player identity for nickname-first entry
 export interface PlayerIdentity {
   nickname: string;
@@ -57,7 +64,8 @@ export type AppView =
   | 'loading' 
   | 'nickname_entry' 
   | 'lobby' 
-  | 'match';
+  | 'match'
+  | 'leaderboard';
 
 // Client session persistence
 export interface ClientSession {
@@ -121,6 +129,11 @@ export interface PublicMatchState {
   version: number;
   turnDeadlineAt: number | null;
   remainingTurnMs: number | null;
+  // Gamma 2: rematch handshake state
+  rematchRequestedByX?: boolean;
+  rematchRequestedByO?: boolean;
+  // Gamma 3: server-side stats commit guard (observability / debug)
+  statsCommitted?: boolean;
 }
 
 // Room join result (legacy composite type - prefer using specific RPC result types)
@@ -295,4 +308,45 @@ export interface RoomQueryIntent {
   roomCode: string;
   consumed: boolean;
   attemptedAt?: number;
+}
+
+// Gamma 3: Leaderboard types
+export interface LeaderboardEntry {
+  userId: string;
+  nickname: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  streak: number;
+  bestStreak: number;
+  gamesPlayed: number;
+  updatedAt: number;
+  rank?: number;
+}
+
+export interface GetLeaderboardResponse {
+  success: boolean;
+  top: LeaderboardEntry[];
+  self: LeaderboardEntry | null;
+  updatedAt: number;
+  error?: string;
+  message?: string;
+}
+
+// Gamma 3: Debug info type (optional, for debug overlay)
+export interface DebugInfo {
+  matchId: string;
+  roomCode: string;
+  mode: GameMode;
+  userId: string | null;
+  nickname: string | null;
+  symbol: PlayerSymbol | null;
+  phase: MatchPhase;
+  version: number;
+  connectionState: ConnectionState;
+  lastStateTimestamp: number;
+  turnDeadlineAt: number | null;
+  remainingTurnMs: number | null;
+  reconnectDeadlineAt: number | null;
+  pendingMoveIndex: number | null;
 }

@@ -13,6 +13,8 @@ interface MatchViewProps {
   matchState: PublicMatchState;
   connectionState: ConnectionState;
   onLeaveMatch?: () => void;
+  debugEnabled?: boolean;
+  onOpenLeaderboard?: () => void;
 }
 
 function connectionMatchClass(state: ConnectionState): string {
@@ -28,7 +30,13 @@ function connectionMatchClass(state: ConnectionState): string {
   }
 }
 
-function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps) {
+function MatchView({
+  matchState,
+  connectionState,
+  onLeaveMatch,
+  debugEnabled = false,
+  onOpenLeaderboard,
+}: MatchViewProps) {
   console.log('DEBUG MatchView: Component rendering', {
     matchId: matchState.matchId,
     phase: matchState.phase,
@@ -39,6 +47,9 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   const [lastActionRejection, setLastActionRejection] = useState<string | null>(null);
   const [pendingMoveIndex, setPendingMoveIndex] = useState<number | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  // Gamma 2: rematch state
+  const [isSubmittingRematch, setIsSubmittingRematch] = useState(false);
+  const [debugOverlayDismissed, setDebugOverlayDismissed] = useState(false);
 
   // Clear rejection when match state changes significantly (e.g., new match)
   useEffect(() => {
@@ -52,6 +63,10 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     } else {
       setPendingMoveIndex(null);
     }
+  }, [matchState.matchId]);
+
+  useEffect(() => {
+    setDebugOverlayDismissed(false);
   }, [matchState.matchId]);
 
   // Log when component mounts/unmounts
@@ -437,6 +452,59 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     setIsSubmittingMove(false);
   }
 
+  // Gamma 2: rematch helpers
+  function getRematchState() {
+    if (!isGameCompleted || !playerSymbol) {
+      return null;
+    }
+
+    const currentUserRequestedRematch = playerSymbol === 'X' 
+      ? matchState.rematchRequestedByX 
+      : matchState.rematchRequestedByO;
+    const opponentRequestedRematch = playerSymbol === 'X'
+      ? matchState.rematchRequestedByO
+      : matchState.rematchRequestedByX;
+
+    const currentUserFlag = currentUserRequestedRematch || false;
+    const opponentFlag = opponentRequestedRematch || false;
+    
+    return {
+      currentUserRequestedRematch: currentUserFlag,
+      opponentRequestedRematch: opponentFlag,
+      bothRequested: currentUserFlag && opponentFlag
+    };
+  }
+
+  async function handleRematchClick() {
+    if (!isGameCompleted || isSubmittingRematch || !playerSymbol) {
+      return;
+    }
+
+    const rematchState = getRematchState();
+    if (!rematchState) return;
+
+    setIsSubmittingRematch(true);
+    setLastActionRejection(null);
+
+    // Determine which opcode to send based on whether opponent has already requested
+    let result;
+    if (rematchState.opponentRequestedRematch) {
+      // Opponent already requested, we're accepting
+      result = await nakamaClient.acceptRematch();
+    } else {
+      // We're initiating the request
+      result = await nakamaClient.requestRematch();
+    }
+
+    if (!result.success) {
+      setLastActionRejection(result.message);
+      // Clear rejection after 3 seconds
+      setTimeout(() => setLastActionRejection(null), 3000);
+    }
+
+    setIsSubmittingRematch(false);
+  }
+
   function handleLeaveMatch() {
     if (onLeaveMatch) {
       onLeaveMatch();
@@ -447,6 +515,14 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   const statusText = getStatusText();
   const statusSubtext = getStatusSubtext();
   const outcomeVariant = getOutcomeVariant();
+
+  const storedPending = nakamaClient.getPendingMove();
+  const pendingDebug =
+    storedPending != null
+      ? `cell ${storedPending.index} (sent ${Math.max(0, Math.round((Date.now() - storedPending.timestamp) / 1000))}s ago)`
+      : pendingMoveIndex != null
+        ? `cell ${pendingMoveIndex} (local)`
+        : '—';
 
   function playerCardClass(symbol: 'X' | 'O'): string {
     const parts = ['match-player-card', symbol === 'X' ? 'match-player-card--x' : 'match-player-card--o'];
@@ -530,11 +606,174 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
         />
       </div>
 
-      {isGameCompleted && onLeaveMatch && (
+      {isGameCompleted && (
         <div className="match-actions">
-          <button type="button" className="btn btn--muted btn--block" onClick={handleLeaveMatch}>
-            Back to Lobby
-          </button>
+          {/* Gamma 2: rematch handshake panel */}
+          {playerSymbol && (
+            <div className="match-rematch-panel">
+              {(() => {
+                const rematchState = getRematchState();
+                if (!rematchState) return null;
+
+                if (rematchState.bothRequested) {
+                  return (
+                    <div className="match-rematch-status">
+                      <p className="match-rematch-status__text">Rematch accepted! Waiting for server...</p>
+                    </div>
+                  );
+                } else if (rematchState.currentUserRequestedRematch) {
+                  return (
+                    <div className="match-rematch-status">
+                      <p className="match-rematch-status__text">Waiting for opponent to accept rematch…</p>
+                      <button
+                        type="button"
+                        className="btn btn--muted btn--block"
+                        disabled={true}
+                      >
+                        Rematch Requested
+                      </button>
+                    </div>
+                  );
+                } else if (rematchState.opponentRequestedRematch) {
+                  return (
+                    <>
+                      <div className="match-rematch-status">
+                        <p className="match-rematch-status__text">Opponent wants a rematch.</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--block"
+                        onClick={handleRematchClick}
+                        disabled={isSubmittingRematch}
+                      >
+                        {isSubmittingRematch ? 'Accepting...' : 'Accept rematch'}
+                      </button>
+                    </>
+                  );
+                } else {
+                  return (
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--block"
+                      onClick={handleRematchClick}
+                      disabled={isSubmittingRematch}
+                    >
+                      {isSubmittingRematch ? 'Requesting...' : 'Rematch'}
+                    </button>
+                  );
+                }
+              })()}
+            </div>
+          )}
+
+          {/* Gamma 2: requeue calmness */}
+          {onOpenLeaderboard && (
+            <button
+              type="button"
+              className="btn btn--secondary btn--block"
+              onClick={onOpenLeaderboard}
+            >
+              Leaderboard
+            </button>
+          )}
+
+          {onLeaveMatch && (
+            <button 
+              type="button" 
+              className="btn btn--muted btn--block" 
+              onClick={handleLeaveMatch}
+            >
+              Find another match
+            </button>
+          )}
+        </div>
+      )}
+
+      {debugEnabled && !debugOverlayDismissed && (
+        <div className="match-debug-overlay" aria-label="Debug panel">
+          <div className="match-debug-overlay__head">
+            <span className="match-debug-overlay__title">Debug</span>
+            <button
+              type="button"
+              className="match-debug-overlay__dismiss"
+              onClick={() => setDebugOverlayDismissed(true)}
+              aria-label="Dismiss debug panel"
+            >
+              ×
+            </button>
+          </div>
+          <div className="match-debug-overlay__body">
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">matchId</span>
+              <span className="match-debug-row__v">{matchState.matchId ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">roomCode</span>
+              <span className="match-debug-row__v">{matchState.roomCode ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">mode</span>
+              <span className="match-debug-row__v">{matchState.mode ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">userId</span>
+              <span className="match-debug-row__v">{userId ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">nickname</span>
+              <span className="match-debug-row__v">{nakamaClient.getNickname() || '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">symbol</span>
+              <span className="match-debug-row__v">{playerSymbol ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">phase</span>
+              <span className="match-debug-row__v">{matchState.phase ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">version</span>
+              <span className="match-debug-row__v">{matchState.version ?? '—'}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">connectionState</span>
+              <span className="match-debug-row__v">{connectionState}</span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">lastStateSync</span>
+              <span className="match-debug-row__v">
+                {matchState.updatedAt != null ? String(matchState.updatedAt) : '—'}
+              </span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">turnDeadlineAt</span>
+              <span className="match-debug-row__v">
+                {matchState.turnDeadlineAt != null ? String(matchState.turnDeadlineAt) : '—'}
+              </span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">remainingTurnMs</span>
+              <span className="match-debug-row__v">
+                {matchState.remainingTurnMs != null ? String(matchState.remainingTurnMs) : '—'}
+              </span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">reconnectDeadlineAt</span>
+              <span className="match-debug-row__v">
+                {matchState.reconnectDeadlineAt != null ? String(matchState.reconnectDeadlineAt) : '—'}
+              </span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">statsCommitted</span>
+              <span className="match-debug-row__v">
+                {matchState.statsCommitted === undefined ? '—' : String(matchState.statsCommitted)}
+              </span>
+            </div>
+            <div className="match-debug-row">
+              <span className="match-debug-row__k">pendingMove</span>
+              <span className="match-debug-row__v">{pendingDebug}</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

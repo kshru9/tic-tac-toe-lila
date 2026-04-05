@@ -18,6 +18,7 @@
   "files": [
     "src/nakama.d.ts",
     "src/gameRules.ts",
+    "src/leaderboard.ts",
     "src/ticTacToeMatch.ts",
     "src/rpc.ts",
     "src/index.ts"

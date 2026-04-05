@@ -4,6 +4,7 @@ import { nakamaClient } from './nakamaClient';
 import { ConnectionState, AppView, PublicMatchState, MatchEvent, BannerMessage, BannerType, GameMode } from './types';
 import Lobby from './Lobby';
 import MatchView from './MatchView';
+import LeaderboardView from './LeaderboardView';
 
 function connectionBannerClass(state: ConnectionState): string {
   const base = 'app-connection-banner';
@@ -34,6 +35,10 @@ function App() {
   const [pendingDeepLinkMode, setPendingDeepLinkMode] = useState<GameMode>('classic');
   const [deepLinkJoinError, setDeepLinkJoinError] = useState<string | null>(null);
   const [isAttemptingDeepLinkJoin, setIsAttemptingDeepLinkJoin] = useState(false);
+  const [matchDebugEnabled] = useState(
+    () => new URLSearchParams(window.location.search).get('debug') === '1'
+  );
+  const [leaderboardReturnTarget, setLeaderboardReturnTarget] = useState<'lobby' | 'match'>('lobby');
 
   // Helper functions for banners
   const addBanner = (type: BannerType, message: string, autoDismiss = true) => {
@@ -113,10 +118,10 @@ function App() {
         case 'match_left':
           console.log('DEBUG App: match_left received');
           // Always return to lobby when leaving a match.
+          // Gamma 2: preserve mode when returning to lobby
           setView('lobby');
           setMatchState(null);
           setPendingRoomCode(null);
-          setPendingRoomMode('classic');
           break;
       }
     };
@@ -278,9 +283,24 @@ function App() {
     setMatchState(null);
     setMatchError(null);
     setPendingRoomCode(null);
-    setPendingRoomMode('classic');
+    // Gamma 2: preserve mode when returning to lobby for "Find another match"
+    // Don't reset pendingRoomMode - keep it as the current match's mode
     setView('lobby');
     clearBanners();
+  };
+
+  const handleOpenLeaderboardFromLobby = () => {
+    setLeaderboardReturnTarget('lobby');
+    setView('leaderboard');
+  };
+
+  const handleOpenLeaderboardFromMatch = () => {
+    setLeaderboardReturnTarget('match');
+    setView('leaderboard');
+  };
+
+  const handleLeaderboardBack = () => {
+    setView(leaderboardReturnTarget);
   };
 
   // Manual retry for deep link join
@@ -406,13 +426,18 @@ function App() {
         return (
           <Lobby 
             onJoinMatch={handleJoinMatch}
+            onOpenLeaderboard={handleOpenLeaderboardFromLobby}
             pendingDeepLinkRoomCode={pendingDeepLinkRoomCode}
             pendingDeepLinkMode={pendingDeepLinkMode}
             deepLinkJoinError={deepLinkJoinError}
             isAttemptingDeepLinkJoin={isAttemptingDeepLinkJoin}
             onRetryDeepLinkJoin={handleRetryDeepLinkJoin}
+            initialMode={pendingRoomMode}
           />
         );
+
+      case 'leaderboard':
+        return <LeaderboardView onBack={handleLeaderboardBack} />;
 
       case 'match':
         if (!matchState) {
@@ -446,6 +471,7 @@ function App() {
             version: 1,
             turnDeadlineAt: null,
             remainingTurnMs: null,
+            statsCommitted: false,
           };
 
           return (
@@ -453,6 +479,8 @@ function App() {
               matchState={placeholderState}
               connectionState={connectionState}
               onLeaveMatch={handleLeaveMatch}
+              debugEnabled={matchDebugEnabled}
+              onOpenLeaderboard={handleOpenLeaderboardFromMatch}
             />
           );
         }
@@ -461,6 +489,8 @@ function App() {
             matchState={matchState}
             connectionState={connectionState}
             onLeaveMatch={handleLeaveMatch}
+            debugEnabled={matchDebugEnabled}
+            onOpenLeaderboard={handleOpenLeaderboardFromMatch}
           />
         );
 

@@ -21,7 +21,13 @@ import {
   PendingMove,
   RoomQueryIntent,
   ResumeAttemptResult,
-  GameMode
+  GetLeaderboardResponse,
+  GameMode,
+  OP_CODE_MOVE_INTENT,
+  OP_CODE_STATE_SYNC,
+  OP_CODE_ACTION_REJECTED,
+  OP_CODE_REMATCH_REQUEST,
+  OP_CODE_REMATCH_ACCEPT
 } from './types';
 
 // Configuration from environment
@@ -492,7 +498,7 @@ class NakamaClient {
       console.log('DEBUG handleMatchData: Parsed data', { parsedData });
       
       switch (opCode) {
-        case 2: // OP_CODE_STATE_SYNC
+        case OP_CODE_STATE_SYNC:
           console.log('DEBUG handleMatchData: STATE_SYNC for match', matchId, 'state:', parsedData);
           console.log('DEBUG handleMatchData: Mode=', parsedData.mode, 'turnDeadlineAt=', parsedData.turnDeadlineAt, 'remainingTurnMs=', parsedData.remainingTurnMs);
           const matchState = parsedData as PublicMatchState;
@@ -515,7 +521,7 @@ class NakamaClient {
           this.emitMatchEvent('state_sync', matchState);
           break;
           
-        case 3: // OP_CODE_ACTION_REJECTED
+        case OP_CODE_ACTION_REJECTED:
           console.log('DEBUG handleMatchData: ACTION_REJECTED for match', matchId, 'reason:', parsedData.reason, 'message:', parsedData.message);
           const rejectPayload = parsedData as ActionRejectPayload;
           
@@ -789,6 +795,56 @@ class NakamaClient {
     }
   }
 
+  // Gamma 3: Leaderboard methods
+  async getLeaderboard(limit?: number, offset?: number): Promise<GetLeaderboardResponse> {
+    if (this.connectionState !== 'connected') {
+      return {
+        success: false,
+        top: [],
+        self: null,
+        updatedAt: Date.now(),
+        error: 'not_connected',
+        message: 'Not connected to multiplayer service'
+      };
+    }
+
+    if (!this.session) {
+      return {
+        success: false,
+        top: [],
+        self: null,
+        updatedAt: Date.now(),
+        error: 'not_authenticated',
+        message: 'Not authenticated'
+      };
+    }
+
+    try {
+      const payload = {
+        limit: limit || 20,
+        offset: offset || 0
+      };
+      
+      console.log('DEBUG getLeaderboard: Sending payload', payload);
+      
+      const result = await this.client.rpc(this.session, 'get_leaderboard', payload as any);
+      const rpcResult: GetLeaderboardResponse = this.parseRpcPayload(result.payload, 'get_leaderboard');
+      
+      return rpcResult;
+      
+    } catch (error) {
+      console.error('Get leaderboard error:', error);
+      return {
+        success: false,
+        top: [],
+        self: null,
+        updatedAt: Date.now(),
+        error: 'request_failed',
+        message: `Failed to get leaderboard: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
   // Match join and gameplay methods
   async joinMatch(matchId: string, roomCode?: string): Promise<ShellActionResult> {
     console.log('DEBUG joinMatch: called', { matchId, roomCode, connectionState: this.connectionState });
@@ -919,7 +975,7 @@ class NakamaClient {
       const payloadStr = JSON.stringify(payload);
       console.log('DEBUG sendMoveIntent: Sending move', {
         matchId: this.activeMatchContext.matchId,
-        opCode: 1,
+        opCode: OP_CODE_MOVE_INTENT,
         payload: payloadStr,
         payloadObj: payload,
         currentVersion: currentState.version,
@@ -931,7 +987,7 @@ class NakamaClient {
       
       await this.socket.sendMatchState(
         this.activeMatchContext.matchId,
-        1, // OP_CODE_MOVE_INTENT
+        OP_CODE_MOVE_INTENT,
         data // Send as Uint8Array instead of string
       );
       
@@ -949,6 +1005,95 @@ class NakamaClient {
         message: `Failed to send move: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
+  }
+
+  // Gamma 2: rematch participation
+  async sendRematchIntent(opCode: typeof OP_CODE_REMATCH_REQUEST | typeof OP_CODE_REMATCH_ACCEPT): Promise<ShellActionResult> {
+    console.log('DEBUG sendRematchIntent: called', { 
+      opCode,
+      connectionState: this.connectionState,
+      activeMatchId: this.activeMatchContext?.matchId
+    });
+
+    if (this.connectionState !== 'connected') {
+      console.log('DEBUG sendRematchIntent: Not connected');
+      return {
+        success: false,
+        message: 'Not connected to multiplayer service',
+      };
+    }
+
+    if (!this.socket) {
+      console.log('DEBUG sendRematchIntent: Socket not available');
+      return {
+        success: false,
+        message: 'Socket not available',
+      };
+    }
+
+    if (!this.activeMatchContext?.matchId) {
+      console.log('DEBUG sendRematchIntent: No active match context');
+      return {
+        success: false,
+        message: 'Not in a match',
+      };
+    }
+
+    try {
+      // Get current match state for expectedVersion
+      const currentState = this.latestMatchState;
+      if (!currentState || currentState.matchId !== this.activeMatchContext.matchId) {
+        console.log('DEBUG sendRematchIntent: No current match state available');
+        return {
+          success: false,
+          message: 'Cannot send rematch: match state not synchronized',
+        };
+      }
+
+      // Create payload with expectedVersion to maintain consistency
+      const payload = {
+        actionId: generateActionId(),
+        expectedVersion: currentState.version
+      };
+
+      const payloadStr = JSON.stringify(payload);
+      console.log('DEBUG sendRematchIntent: Sending rematch intent', {
+        matchId: this.activeMatchContext.matchId,
+        opCode,
+        payload: payloadStr,
+        currentVersion: currentState.version
+      });
+
+      // Convert string to Uint8Array for reliable transmission
+      const data = stringToUint8Array(payloadStr);
+
+      await this.socket.sendMatchState(
+        this.activeMatchContext.matchId,
+        opCode,
+        data
+      );
+
+      console.log('DEBUG sendRematchIntent: Rematch intent sent successfully');
+      return {
+        success: true,
+        message: 'Rematch request sent',
+      };
+    } catch (error) {
+      console.error('DEBUG sendRematchIntent: Error sending rematch intent:', error);
+      return {
+        success: false,
+        message: `Failed to send rematch: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  // Convenience methods for rematch flow
+  async requestRematch(): Promise<ShellActionResult> {
+    return this.sendRematchIntent(OP_CODE_REMATCH_REQUEST);
+  }
+
+  async acceptRematch(): Promise<ShellActionResult> {
+    return this.sendRematchIntent(OP_CODE_REMATCH_ACCEPT);
   }
 
   leaveMatch(): void {

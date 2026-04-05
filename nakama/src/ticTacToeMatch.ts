@@ -66,6 +66,8 @@ interface TicTacToeMatchState {
   rematchRequestedByO: boolean;
   // Gamma 2: empty room dissolve tracking
   emptySinceAt: number | null;
+  // Gamma 3: leaderboard stats commit guard
+  statsCommitted: boolean;
 }
 
 // Move intent payload
@@ -146,7 +148,11 @@ function getPublicState(state: TicTacToeMatchState): any {
     reconnectDeadlineAt: state.reconnectDeadlineAt,
     version: state.version,
     turnDeadlineAt: state.turnDeadlineAt,
-    remainingTurnMs: state.remainingTurnMs
+    remainingTurnMs: state.remainingTurnMs,
+    // Gamma 2: Include rematch handshake state
+    rematchRequestedByX: state.rematchRequestedByX,
+    rematchRequestedByO: state.rematchRequestedByO,
+    statsCommitted: state.statsCommitted
   };
 }
 
@@ -264,11 +270,15 @@ function pauseTimer(state: TicTacToeMatchState): void {
 /**
  * Resume timer after reconnect
  */
-function resumeTimer(state: TicTacToeMatchState): void {
+function resumeTimer(
+  state: TicTacToeMatchState,
+  nk?: nkruntime.Nakama,
+  logger?: nkruntime.Logger
+): void {
   if (state.mode === 'timed' && state.remainingTurnMs !== null) {
     if (state.remainingTurnMs <= 0) {
-      // Timeout occurred during pause
-      handleTimeoutForfeit(state);
+      // Timeout after reconnect grace: finalize with nk/logger when available so stats commit.
+      handleTimeoutForfeit(state, nk, logger);
     } else {
       state.turnDeadlineAt = Date.now() + state.remainingTurnMs;
       state.remainingTurnMs = null;
@@ -279,7 +289,11 @@ function resumeTimer(state: TicTacToeMatchState): void {
 /**
  * Handle timeout forfeit
  */
-function handleTimeoutForfeit(state: TicTacToeMatchState): void {
+function handleTimeoutForfeit(
+  state: TicTacToeMatchState,
+  nk?: nkruntime.Nakama,
+  logger?: nkruntime.Logger
+): void {
   if (state.phase !== 'in_progress' || !state.currentTurn) return;
   
   state.phase = 'completed';
@@ -289,6 +303,134 @@ function handleTimeoutForfeit(state: TicTacToeMatchState): void {
   state.turnDeadlineAt = null;
   state.remainingTurnMs = null;
   bumpVersion(state);
+  
+  // Gamma 3: Finalize match completion if nk and logger are provided
+  if (nk && logger) {
+    finalizeMatchCompletion(state, nk, logger);
+  }
+}
+
+/**
+ * Check if match completion should update leaderboard stats
+ */
+function isLeaderboardEligibleCompletion(state: TicTacToeMatchState): boolean {
+  if (state.phase !== 'completed') return false;
+  if (!state.outcomeReason) return false;
+  
+  // Only real competitive outcomes should affect leaderboard
+  const eligibleReasons: OutcomeReason[] = [
+    'win_row',
+    'win_column', 
+    'win_diagonal',
+    'draw_full_board',
+    'timeout_forfeit',
+    'disconnect_forfeit'
+  ];
+  
+  if (!eligibleReasons.includes(state.outcomeReason)) {
+    return false;
+  }
+  
+  // Additional checks based on outcome type
+  if (state.outcomeReason === 'draw_full_board') {
+    // For draws, need both players
+    return !!(state.playerX && state.playerX.userId && state.playerO && state.playerO.userId);
+  } else {
+    // For wins, need a winner and a loser
+    if (!state.winner) return false;
+    
+    if (state.winner === 'X') {
+      return !!(state.playerX && state.playerX.userId && state.playerO && state.playerO.userId);
+    } else if (state.winner === 'O') {
+      return !!(state.playerO && state.playerO.userId && state.playerX && state.playerX.userId);
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Get player info for leaderboard updates
+ */
+function getPlayerInfoForLeaderboard(state: TicTacToeMatchState): {
+  winnerUserId: string | null;
+  winnerNickname: string | null;
+  loserUserId: string | null;
+  loserNickname: string | null;
+  isDraw: boolean;
+} {
+  const isDraw = state.outcomeReason === 'draw_full_board';
+  
+  if (isDraw) {
+    // For draws, both players are "winners" in the sense they get draw stats
+    return {
+      winnerUserId: state.playerX?.userId || null,
+      winnerNickname: state.playerX?.nickname || null,
+      loserUserId: state.playerO?.userId || null,
+      loserNickname: state.playerO?.nickname || null,
+      isDraw: true
+    };
+  }
+  
+  // For wins, determine winner and loser
+  if (state.winner === 'X') {
+    return {
+      winnerUserId: state.playerX?.userId || null,
+      winnerNickname: state.playerX?.nickname || null,
+      loserUserId: state.playerO?.userId || null,
+      loserNickname: state.playerO?.nickname || null,
+      isDraw: false
+    };
+  } else if (state.winner === 'O') {
+    return {
+      winnerUserId: state.playerO?.userId || null,
+      winnerNickname: state.playerO?.nickname || null,
+      loserUserId: state.playerX?.userId || null,
+      loserNickname: state.playerX?.nickname || null,
+      isDraw: false
+    };
+  }
+  
+  // No winner determined (shouldn't happen for eligible completions)
+  return {
+    winnerUserId: null,
+    winnerNickname: null,
+    loserUserId: null,
+    loserNickname: null,
+    isDraw: false
+  };
+}
+
+/**
+ * Finalize match completion and update leaderboard stats if needed
+ * This wrapper ensures stats are committed exactly once
+ */
+function finalizeMatchCompletion(
+  state: TicTacToeMatchState,
+  nk: nkruntime.Nakama,
+  logger: nkruntime.Logger
+): void {
+  if (!isLeaderboardEligibleCompletion(state) || state.statsCommitted) {
+    return;
+  }
+
+  logger.info('Gamma 3: Committing leaderboard stats for match ' + state.matchId + ', outcome: ' + state.outcomeReason);
+
+  const info = getPlayerInfoForLeaderboard(state);
+  const ok = commitMatchLeaderboardToStorage(
+    nk,
+    logger,
+    info.winnerUserId,
+    info.winnerNickname,
+    info.loserUserId,
+    info.loserNickname,
+    info.isDraw
+  );
+
+  if (ok) {
+    state.statsCommitted = true;
+    logger.info('Gamma 3: Stats committed for match ' + state.matchId);
+  }
 }
 
 /**
@@ -396,7 +538,9 @@ var matchInit = function matchInit(
     // Gamma 2: initialize new fields
     rematchRequestedByX: false,
     rematchRequestedByO: false,
-    emptySinceAt: null
+    emptySinceAt: null,
+    // Gamma 3: leaderboard stats commit guard
+    statsCommitted: false
   };
 
 	  // Set initial label via matchInit return contract.
@@ -476,7 +620,7 @@ var matchJoin = function matchJoin(
         state.reconnectDeadlineAt = null;
         state.phase = 'in_progress';
         // Resume timer for timed mode
-        resumeTimer(state);
+        resumeTimer(state, nk, logger);
       }
     } else {
       // Gamma 2: Race-hardened seat assignment
@@ -602,7 +746,7 @@ var matchLoop = function matchLoop(
   // Check for timeout forfeit in timed mode
   if (state.phase === 'in_progress' && state.mode === 'timed' && state.turnDeadlineAt && now >= state.turnDeadlineAt) {
     logger.info('DEBUG matchLoop: Timeout forfeit detected for turn ' + state.currentTurn);
-    handleTimeoutForfeit(state);
+    handleTimeoutForfeit(state, nk, logger);
     updateMatchLabel(state, dispatcher);
     broadcastState(state, dispatcher);
     return { state };
@@ -625,6 +769,10 @@ var matchLoop = function matchLoop(
     }
     
     bumpVersion(state);
+    
+    // Gamma 3: Finalize match completion and update leaderboard stats
+    finalizeMatchCompletion(state, nk, logger);
+    
     updateMatchLabel(state, dispatcher);
     broadcastState(state, dispatcher);
     return { state };
@@ -642,6 +790,8 @@ var matchLoop = function matchLoop(
       state.turnDeadlineAt = null;
       state.remainingTurnMs = null;
       bumpVersion(state);
+      // Note: Waiting room expiry does NOT update leaderboard stats
+      // because it's not a real competitive match completion
       updateMatchLabel(state, dispatcher);
       broadcastState(state, dispatcher);
       return { state };
@@ -888,6 +1038,9 @@ var matchLoop = function matchLoop(
           state.turnDeadlineAt = null;
           state.remainingTurnMs = null;
           logger.info('DEBUG: Game completed. Winner: ' + outcome.winner + ', reason: ' + outcome.outcomeReason);
+          
+          // Gamma 3: Finalize match completion and update leaderboard stats
+          finalizeMatchCompletion(state, nk, logger);
         } else {
           // Switch turn
           state.currentTurn = getNextTurn(state.currentTurn!);
@@ -963,7 +1116,8 @@ var matchLoop = function matchLoop(
         // Clear rematch flags
         state.rematchRequestedByX = false;
         state.rematchRequestedByO = false;
-        
+        state.statsCommitted = false;
+
         // Set turn deadline for timed mode
         if (state.mode === 'timed') {
           state.turnDeadlineAt = now + TURN_MS;
