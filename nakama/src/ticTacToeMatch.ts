@@ -70,6 +70,63 @@ interface TicTacToeMatchState {
   statsCommitted: boolean;
 }
 
+/** Parse join metadata into a seat nickname (object, alternate keys, or JSON string). */
+function nicknameFromJoinMetadata(md: any): string {
+  if (md == null || md === '') return 'Player';
+  if (typeof md === 'string') {
+    var t = md.trim();
+    if (t.length === 0) return 'Player';
+    if (t.charAt(0) === '{' || t.charAt(0) === '[') {
+      try {
+        return nicknameFromJoinMetadata(JSON.parse(t));
+      } catch (_e) {
+        return t;
+      }
+    }
+    return t;
+  }
+  if (typeof md === 'object') {
+    var raw =
+      md.nickname != null
+        ? md.nickname
+        : md.Nickname != null
+          ? md.Nickname
+          : md.nick_name;
+    if (raw == null || raw === undefined) return 'Player';
+    var s = String(raw).trim();
+    return s.length > 0 ? s : 'Player';
+  }
+  return 'Player';
+}
+
+/** Read nickname from a seat for leaderboard (camelCase or snake_case wire keys). */
+function nicknameFromSeatField(seat: PlayerSeatState | null | undefined): string | null {
+  if (!seat) return null;
+  var seatAny = seat as any;
+  var raw =
+    seatAny.nickname != null
+      ? seatAny.nickname
+      : seatAny.Nickname != null
+        ? seatAny.Nickname
+        : seatAny.nick_name;
+  if (raw == null || raw === undefined) return null;
+  var st = String(raw).trim();
+  return st.length > 0 ? st : null;
+}
+
+/**
+ * Best-effort display nickname for leaderboard: seat first, else room-creator RPC name when seat is still default.
+ */
+function leaderboardNicknameForSeat(state: TicTacToeMatchState, seat: PlayerSeatState | null | undefined): string | null {
+  if (!seat || !seat.userId) return null;
+  var fromSeat = nicknameFromSeatField(seat);
+  var creatorTrim = state.creatorNickname != null ? String(state.creatorNickname).trim() : '';
+  if (state.creatorUserId === seat.userId && creatorTrim.length > 0) {
+    if (fromSeat == null || fromSeat === 'Player') return creatorTrim;
+  }
+  return fromSeat;
+}
+
 // Move intent payload
 interface MoveIntentPayload {
   index: number;
@@ -365,9 +422,9 @@ function getPlayerInfoForLeaderboard(state: TicTacToeMatchState): {
     // For draws, both players are "winners" in the sense they get draw stats
     return {
       winnerUserId: state.playerX?.userId || null,
-      winnerNickname: state.playerX?.nickname || null,
+      winnerNickname: leaderboardNicknameForSeat(state, state.playerX),
       loserUserId: state.playerO?.userId || null,
-      loserNickname: state.playerO?.nickname || null,
+      loserNickname: leaderboardNicknameForSeat(state, state.playerO),
       isDraw: true
     };
   }
@@ -376,17 +433,17 @@ function getPlayerInfoForLeaderboard(state: TicTacToeMatchState): {
   if (state.winner === 'X') {
     return {
       winnerUserId: state.playerX?.userId || null,
-      winnerNickname: state.playerX?.nickname || null,
+      winnerNickname: leaderboardNicknameForSeat(state, state.playerX),
       loserUserId: state.playerO?.userId || null,
-      loserNickname: state.playerO?.nickname || null,
+      loserNickname: leaderboardNicknameForSeat(state, state.playerO),
       isDraw: false
     };
   } else if (state.winner === 'O') {
     return {
       winnerUserId: state.playerO?.userId || null,
-      winnerNickname: state.playerO?.nickname || null,
+      winnerNickname: leaderboardNicknameForSeat(state, state.playerO),
       loserUserId: state.playerX?.userId || null,
-      loserNickname: state.playerX?.nickname || null,
+      loserNickname: leaderboardNicknameForSeat(state, state.playerX),
       isDraw: false
     };
   }
@@ -558,7 +615,7 @@ var matchJoinAttempt = function matchJoinAttempt(
   metadata: { [key: string]: any }
 ): { state: TicTacToeMatchState; accept: boolean; rejectMessage?: string } {
   const userId = presence.userId;
-  const nickname = metadata.nickname || 'Player';
+  const nickname = nicknameFromJoinMetadata(metadata);
   
   const existingSymbol = getPlayerSymbol(state, userId);
   if (state.phase === 'reconnect_grace' && existingSymbol) {
@@ -596,8 +653,7 @@ var matchJoin = function matchJoin(
     const userId = presence.userId;
     logger.info('Processing join for user ' + userId + ', nickname from metadata: ' + (presence.metadata?.nickname || 'none'));
     const md: any = presence.metadata;
-    let nickname = (md && md.nickname) ? String(md.nickname) : 'Player';
-    if (!nickname.trim()) nickname = 'Player';
+    let nickname = nicknameFromJoinMetadata(md);
     
     // Check if user is reconnecting to existing seat
     logger.info('playerX userId: ' + (state.playerX?.userId || 'null') + ', playerO userId: ' + (state.playerO?.userId || 'null'));

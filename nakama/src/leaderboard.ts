@@ -180,7 +180,7 @@ function leaderboardBuildResponse(
     var row = ranked[r];
     withRank.push({
       userId: row.userId,
-      nickname: row.nickname || 'Player',
+      nickname: leaderboardSanitizeNickname(row.nickname),
       wins: row.wins,
       losses: row.losses,
       draws: row.draws,

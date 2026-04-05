@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import { nakamaClient } from './nakamaClient';
 import { GetLeaderboardResponse } from './types';
 
+function leaderboardRowDisplayName(nickname: string | null | undefined): string {
+  const t = nickname?.trim();
+  return t && t.length > 0 ? t : 'Player';
+}
+
 interface LeaderboardViewProps {
   onBack?: () => void;
 }
@@ -147,7 +152,7 @@ function LeaderboardView({ onBack }: LeaderboardViewProps) {
 
                   <div className="leaderboard-player">
                     <div className="leaderboard-player-name">
-                      {entry.nickname || 'Player'}
+                      {leaderboardRowDisplayName(entry.nickname)}
                       {isCurrentUser && <span className="leaderboard-you-badge">You</span>}
                     </div>
                     <div className="leaderboard-player-stats">
@@ -192,7 +197,7 @@ function LeaderboardView({ onBack }: LeaderboardViewProps) {
 
                 <div className="leaderboard-player">
                   <div className="leaderboard-player-name">
-                    {selfEntry.nickname || 'Player'}
+                    {leaderboardRowDisplayName(selfEntry.nickname)}
                     <span className="leaderboard-you-badge">You</span>
                   </div>
                   <div className="leaderboard-player-stats">
