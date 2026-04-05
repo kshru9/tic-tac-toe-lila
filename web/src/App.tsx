@@ -334,6 +334,9 @@ function App() {
             createdAt: Date.now(),
             updatedAt: Date.now(),
             reconnectDeadlineAt: null,
+            version: 1,
+            turnDeadlineAt: null,
+            remainingTurnMs: null,
           };
 
           return (

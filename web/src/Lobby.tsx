@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { nakamaClient } from './nakamaClient';
-import { ConnectionState, RoomSummary, RoomQueryIntent } from './types';
+import { ConnectionState, RoomSummary, RoomQueryIntent, GameMode } from './types';
 
 interface LobbyProps {
   onJoinMatch?: (matchId: string, roomCode?: string) => void;
@@ -16,6 +16,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>(nakamaClient.getConnectionState());
   const [createdRoomInfo, setCreatedRoomInfo] = useState<{ roomCode: string; matchId: string } | null>(null);
   const [roomQueryIntent, setRoomQueryIntent] = useState<RoomQueryIntent | null>(null);
+  const [selectedMode, setSelectedMode] = useState<GameMode>('classic');
 
   const nickname = nakamaClient.getNickname();
   const isConnected = connectionState === 'connected';
@@ -44,7 +45,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     setIsLoading(true);
     clearMessages();
 
-    const result = await nakamaClient.quickPlay({ gameMode: 'classic' });
+    const result = await nakamaClient.quickPlay({ gameMode: selectedMode });
 
     if (result.success && result.data) {
       showStatus(`Match found (${result.data.roomCode})! Joining...`);
@@ -67,7 +68,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     setIsLoading(true);
     clearMessages();
 
-    const result = await nakamaClient.createRoom({ isPrivate: true });
+    const result = await nakamaClient.createRoom({ isPrivate: true, mode: selectedMode });
 
     if (result.success && result.data) {
       setCreatedRoomInfo({
@@ -207,6 +208,28 @@ function Lobby({ onJoinMatch }: LobbyProps) {
         <p className="lobby__tagline">Choose how you want to play</p>
       </div>
 
+      <div className="lobby-mode-selector">
+        <div className="lobby-mode-selector__label">Game Mode:</div>
+        <div className="lobby-mode-selector__options">
+          <button
+            type="button"
+            className={`lobby-mode-option ${selectedMode === 'classic' ? 'lobby-mode-option--active' : ''}`}
+            onClick={() => setSelectedMode('classic')}
+          >
+            <span className="lobby-mode-option__name">Classic</span>
+            <span className="lobby-mode-option__desc">No time limit</span>
+          </button>
+          <button
+            type="button"
+            className={`lobby-mode-option ${selectedMode === 'timed' ? 'lobby-mode-option--active' : ''}`}
+            onClick={() => setSelectedMode('timed')}
+          >
+            <span className="lobby-mode-option__name">Timed</span>
+            <span className="lobby-mode-option__desc">30 seconds per turn</span>
+          </button>
+        </div>
+      </div>
+
       <div className="lobby__actions">
         <div className="lobby-action-card lobby-action-card--hero">
           <h3 className="lobby-action-card__title">Quick Play</h3>
@@ -328,7 +351,10 @@ function Lobby({ onJoinMatch }: LobbyProps) {
               <div key={room.matchId} className="lobby-room-row">
                 <div>
                   <div className="lobby-room-row__code">{room.roomCode}</div>
-                  <div className="lobby-room-row__meta">{room.playerCount}/2 players</div>
+                  <div className="lobby-room-row__meta">
+                    <span className="lobby-room-row__mode">{room.mode === 'timed' ? '⏱️ Timed' : '♟️ Classic'}</span>
+                    <span className="lobby-room-row__players">{room.playerCount}/2 players</span>
+                  </div>
                 </div>
                 <button
                   type="button"

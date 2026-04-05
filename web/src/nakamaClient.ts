@@ -170,6 +170,15 @@ function clearPendingMove(): void {
   localStorage.removeItem(STORAGE_KEYS.PENDING_MOVE);
 }
 
+// Generate unique action ID
+function generateActionId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers
+  return `action_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 
 class NakamaClient {
   private client: Client;
@@ -183,6 +192,7 @@ class NakamaClient {
   private activeMatchContext: ActiveMatchContext | null = null;
   private pendingMove: PendingMove | null = null;
   private roomQueryIntent: RoomQueryIntent | null = null;
+  private latestMatchState: PublicMatchState | null = null;
 
   constructor() {
     this.client = new Client(
@@ -484,6 +494,7 @@ class NakamaClient {
         case 2: // OP_CODE_STATE_SYNC
           console.log('DEBUG handleMatchData: STATE_SYNC for match', matchId, 'state:', parsedData);
           const matchState = parsedData as PublicMatchState;
+          this.latestMatchState = matchState;
           this.updateMatchContextFromState(matchState);
           
           // Clear pending move on state sync if it matches the pending move index
@@ -504,12 +515,21 @@ class NakamaClient {
           
         case 3: // OP_CODE_ACTION_REJECTED
           console.log('DEBUG handleMatchData: ACTION_REJECTED for match', matchId, 'reason:', parsedData.reason, 'message:', parsedData.message);
+          const rejectPayload = parsedData as ActionRejectPayload;
+          
+          // Update latest match state from rejection payload if provided
+          if (rejectPayload.state) {
+            console.log('DEBUG handleMatchData: Updating state from rejection payload');
+            this.latestMatchState = rejectPayload.state;
+            this.updateMatchContextFromState(rejectPayload.state);
+          }
+          
           // Clear pending move on rejection
           if (this.pendingMove && this.activeMatchContext?.matchId === matchId) {
             console.log('DEBUG handleMatchData: Clearing pending move - action rejected', this.pendingMove);
             this.clearPendingMove();
           }
-          this.emitMatchEvent('action_rejected', parsedData as ActionRejectPayload);
+          this.emitMatchEvent('action_rejected', rejectPayload);
           break;
           
         default:
@@ -568,7 +588,7 @@ class NakamaClient {
   }
 
   // Real RPC methods
-  async quickPlay(_options: QuickPlayOptions): Promise<ShellActionResult<{ matchId: string; roomCode: string }>> {
+  async quickPlay(options: QuickPlayOptions): Promise<ShellActionResult<{ matchId: string; roomCode: string }>> {
     if (this.connectionState !== 'connected') {
       return {
         success: false,
@@ -585,7 +605,8 @@ class NakamaClient {
 
     try {
       const payload = {
-        nickname: this.identity?.nickname || 'Player'
+        nickname: this.identity?.nickname || 'Player',
+        mode: options.gameMode || 'classic'
       };
       
       const result = await this.client.rpc(this.session, 'quick_play', payload as any);
@@ -633,7 +654,8 @@ class NakamaClient {
     try {
       const payload = {
         nickname: this.identity?.nickname || 'Player',
-        isPrivate: options.isPrivate || false
+        isPrivate: options.isPrivate || false,
+        mode: options.mode || 'classic'
       };
       
       const result = await this.client.rpc(this.session, 'create_room', payload as any);
@@ -866,13 +888,34 @@ class NakamaClient {
       // Set pending move before sending
       this.setPendingMove(index);
       
-      const payload: MoveIntentPayload = { index };
+      // Get current match state for expectedVersion and expectedTurn
+      const currentState = this.latestMatchState;
+      if (!currentState || currentState.matchId !== this.activeMatchContext.matchId) {
+        console.log('DEBUG sendMoveIntent: No current match state available');
+        this.clearPendingMove();
+        return {
+          success: false,
+          message: 'Cannot send move: match state not synchronized',
+        };
+      }
+      
+      // Generate action ID and create enhanced payload
+      const actionId = generateActionId();
+      const payload: MoveIntentPayload = { 
+        index, 
+        actionId, 
+        expectedVersion: currentState.version,
+        expectedTurn: currentState.currentTurn!
+      };
+      
       const payloadStr = JSON.stringify(payload);
       console.log('DEBUG sendMoveIntent: Sending move', {
         matchId: this.activeMatchContext.matchId,
         opCode: 1,
         payload: payloadStr,
-        payloadObj: payload
+        payloadObj: payload,
+        currentVersion: currentState.version,
+        currentTurn: currentState.currentTurn
       });
       
       // Convert string to Uint8Array for reliable transmission
@@ -915,8 +958,9 @@ class NakamaClient {
       }
     }
     
-    console.log('DEBUG leaveMatch: Clearing activeMatchContext and pending move');
+    console.log('DEBUG leaveMatch: Clearing activeMatchContext, pending move, and match state');
     this.activeMatchContext = null;
+    this.latestMatchState = null;
     saveActiveMatch(null); // Clear from storage
     this.clearPendingMove(); // Clear any pending move
     this.emitMatchEvent('match_left', {});

@@ -5,8 +5,8 @@ export type ConnectionState =
   | 'reconnecting' 
   | 'disconnected';
 
-// Game mode (currently only classic Tic-Tac-Toe)
-export type GameMode = 'classic';
+// Game mode (classic or timed Tic-Tac-Toe)
+export type GameMode = 'classic' | 'timed';
 
 // Player symbols
 export type PlayerSymbol = 'X' | 'O';
@@ -30,7 +30,7 @@ export interface PlayerIdentity {
 export interface RoomSummary {
   matchId: string;
   roomCode: string;
-  mode: 'classic';
+  mode: GameMode;
   playerCount: number;
   maxPlayers: 2;
 }
@@ -78,6 +78,7 @@ export interface CreateRoomOptions {
   roomCode?: string;
   maxPlayers?: number;
   isPrivate?: boolean;
+  mode?: GameMode;
 }
 
 // Join room options
@@ -98,13 +99,14 @@ export type MatchOutcomeReason =
   | 'win_column' 
   | 'win_diagonal' 
   | 'draw_full_board' 
-  | 'disconnect_forfeit';
+  | 'disconnect_forfeit'
+  | 'timeout_forfeit';
 
 // Public match state (canonical state broadcast from server)
 export interface PublicMatchState {
   matchId: string;
   roomCode: string;
-  mode: 'classic';
+  mode: GameMode;
   phase: MatchPhase;
   board: Array<null | 'X' | 'O'>;
   playerX: PlayerSeatState | null;
@@ -116,13 +118,16 @@ export interface PublicMatchState {
   createdAt: number;
   updatedAt: number;
   reconnectDeadlineAt: number | null;
+  version: number;
+  turnDeadlineAt: number | null;
+  remainingTurnMs: number | null;
 }
 
 // Room join result (legacy composite type - prefer using specific RPC result types)
 export interface RoomJoinResult {
   matchId: string;
   roomCode: string;
-  mode: 'classic';
+  mode: GameMode;
   isPrivate?: boolean;
   joinedExisting?: boolean;
 }
@@ -135,7 +140,10 @@ export type MatchActionRejectReason =
   | 'not_your_turn' 
   | 'cell_taken' 
   | 'game_not_in_progress' 
-  | 'invalid_payload';
+  | 'invalid_payload'
+  | 'stale_state'
+  | 'duplicate_action'
+  | 'reconnect_in_progress';
 
 // Gamma 2 RPC error reasons
 export type RoomRpcErrorReason = 
@@ -166,21 +174,21 @@ export interface CreateRoomRpcSuccess {
   matchId: string;
   roomCode: string;
   isPrivate: boolean;
-  mode: 'classic';
+  mode: GameMode;
 }
 
 export interface JoinRoomRpcSuccess {
   success: true;
   matchId: string;
   roomCode: string;
-  mode: 'classic';
+  mode: GameMode;
 }
 
 export interface QuickPlayRpcSuccess {
   success: true;
   matchId: string;
   roomCode: string;
-  mode: 'classic';
+  mode: GameMode;
   joinedExisting: boolean;
 }
 
@@ -198,11 +206,15 @@ export type ListRoomsRpcResult = ListRoomsRpcSuccess | ListRoomsRpcErrorResult;
 // Realtime message types
 export interface MoveIntentPayload {
   index: number;
+  actionId: string;
+  expectedVersion: number;
+  expectedTurn: 'X' | 'O';
 }
 
 export interface ActionRejectPayload {
   reason: MatchActionRejectReason;
   message?: string;
+  state?: PublicMatchState;
 }
 
 // Match event types for app layer
@@ -243,7 +255,9 @@ export type UserFacingMoveRejectReason =
   | 'cell_taken'
   | 'game_not_in_progress'
   | 'invalid_payload'
-  | 'reconnect_in_progress';
+  | 'reconnect_in_progress'
+  | 'stale_state'
+  | 'duplicate_action';
 
 export type UserFacingRoomErrorReason =
   | 'invalid_room_code'
@@ -265,7 +279,8 @@ export type UserFacingOutcomeReason =
   | 'win_column'
   | 'win_diagonal'
   | 'draw_full_board'
-  | 'disconnect_forfeit';
+  | 'disconnect_forfeit'
+  | 'timeout_forfeit';
 
 // Resume attempt result
 export interface ResumeAttemptResult {

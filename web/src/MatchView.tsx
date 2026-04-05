@@ -38,6 +38,7 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
   const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [lastActionRejection, setLastActionRejection] = useState<string | null>(null);
   const [pendingMoveIndex, setPendingMoveIndex] = useState<number | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
 
   // Clear rejection when match state changes significantly (e.g., new match)
   useEffect(() => {
@@ -109,6 +110,30 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       nakamaClient.removeMatchEventListener(handleMatchEvent);
     };
   }, []); // Empty dependency array to run once
+
+  // Timer effect for timed mode
+  useEffect(() => {
+    if (matchState.mode === 'timed' && 
+        matchState.phase === 'in_progress' && 
+        matchState.turnDeadlineAt) {
+      
+      const updateTimer = () => {
+        const now = Date.now();
+        const remaining = Math.max(0, matchState.turnDeadlineAt! - now);
+        setTimeRemaining(Math.floor(remaining / 1000));
+      };
+      
+      // Update immediately
+      updateTimer();
+      
+      // Update every second
+      const interval = setInterval(updateTimer, 1000);
+      
+      return () => clearInterval(interval);
+    } else {
+      setTimeRemaining(null);
+    }
+  }, [matchState.mode, matchState.phase, matchState.turnDeadlineAt]);
 
   function getPlayerSymbol(): PlayerSymbol | null {
     console.log('DEBUG getPlayerSymbol: called', {
@@ -212,6 +237,10 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
         return 'Move rejected: the game is not accepting moves right now';
       case 'invalid_payload':
         return 'Move rejected: invalid move';
+      case 'stale_state':
+        return 'State changed - please try again';
+      case 'duplicate_action':
+        return 'Move already processed';
       default:
         return 'Move rejected';
     }
@@ -231,6 +260,8 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
           return 'Draw after 9 moves';
         case 'disconnect_forfeit':
           return 'Opponent disconnected and did not return';
+        case 'timeout_forfeit':
+          return 'Opponent timed out';
         default:
           return 'You win!';
       }
@@ -246,6 +277,8 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
           return 'Draw after 9 moves';
         case 'disconnect_forfeit':
           return 'You disconnected and did not return';
+        case 'timeout_forfeit':
+          return 'You lost on time';
         default:
           return 'You lose!';
       }
@@ -257,12 +290,30 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
 
     if (isGameCompleted && matchState.outcomeReason) {
       const isWinner = matchState.winner === playerSymbol;
+      if (matchState.outcomeReason === 'timeout_forfeit') {
+        return isWinner ? 'Opponent timed out' : 'You lost on time';
+      }
       return getOutcomeExplanation(matchState.outcomeReason, isWinner);
     }
 
-    if (isReconnectGrace && matchState.reconnectDeadlineAt) {
-      const timeLeft = Math.max(0, Math.floor((matchState.reconnectDeadlineAt - Date.now()) / 1000));
-      return `Reconnect window: ${timeLeft}s`;
+    if (isReconnectGrace) {
+      if (matchState.reconnectDeadlineAt) {
+        const timeLeft = Math.max(0, Math.floor((matchState.reconnectDeadlineAt - Date.now()) / 1000));
+        if (matchState.mode === 'timed' && matchState.remainingTurnMs !== null) {
+          return `Timer paused · Reconnect: ${timeLeft}s`;
+        }
+        return `Reconnect window: ${timeLeft}s`;
+      }
+      if (matchState.mode === 'timed') {
+        return 'Timer paused while opponent reconnects';
+      }
+    }
+
+    // Timer display for timed mode
+    if (matchState.mode === 'timed' && timeRemaining !== null) {
+      if (matchState.phase === 'in_progress') {
+        return `${timeRemaining}s remaining`;
+      }
     }
 
     return null;
@@ -451,7 +502,13 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       ) : (
         <div className="match-status-panel">
           <div className="match-status-panel__title">{statusText}</div>
-          {statusSubtext && <div className="match-status-panel__sub">{statusSubtext}</div>}
+          {statusSubtext && (
+            <div className={`match-status-panel__sub ${
+              matchState.mode === 'timed' && timeRemaining !== null && timeRemaining <= 5 ? 'match-status-panel__sub--urgent' : ''
+            }`}>
+              {statusSubtext}
+            </div>
+          )}
         </div>
       )}
 
