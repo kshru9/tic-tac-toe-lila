@@ -20,7 +20,8 @@ import {
   ActionRejectPayload,
   PendingMove,
   RoomQueryIntent,
-  ResumeAttemptResult
+  ResumeAttemptResult,
+  GameMode
 } from './types';
 
 // Configuration from environment
@@ -588,7 +589,7 @@ class NakamaClient {
   }
 
   // Real RPC methods
-  async quickPlay(options: QuickPlayOptions): Promise<ShellActionResult<{ matchId: string; roomCode: string }>> {
+  async quickPlay(options: QuickPlayOptions): Promise<ShellActionResult<{ matchId: string; roomCode: string; mode: GameMode }>> {
     if (this.connectionState !== 'connected') {
       return {
         success: false,
@@ -618,7 +619,8 @@ class NakamaClient {
           message: 'Match found!',
           data: {
             matchId: rpcResult.matchId,
-            roomCode: rpcResult.roomCode
+            roomCode: rpcResult.roomCode,
+            mode: rpcResult.mode || 'classic'
           }
         };
       } else {
@@ -685,7 +687,7 @@ class NakamaClient {
     }
   }
 
-  async joinRoomByCode(options: JoinRoomOptions): Promise<ShellActionResult<{ matchId: string; roomCode: string }>> {
+  async joinRoomByCode(options: JoinRoomOptions): Promise<ShellActionResult<{ matchId: string; roomCode: string; mode: GameMode }>> {
     if (this.connectionState !== 'connected') {
       return {
         success: false,
@@ -721,7 +723,8 @@ class NakamaClient {
           message: 'Joined room!',
           data: {
             matchId: rpcResult.matchId,
-            roomCode: rpcResult.roomCode
+            roomCode: rpcResult.roomCode,
+            mode: rpcResult.mode || 'classic'
           }
         };
       } else {

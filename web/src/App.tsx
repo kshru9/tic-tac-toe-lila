@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import './theme.css';
 import { nakamaClient } from './nakamaClient';
-import { ConnectionState, AppView, PublicMatchState, MatchEvent, BannerMessage, BannerType } from './types';
+import { ConnectionState, AppView, PublicMatchState, MatchEvent, BannerMessage, BannerType, GameMode } from './types';
 import Lobby from './Lobby';
 import MatchView from './MatchView';
 
@@ -27,6 +27,7 @@ function App() {
   const [matchState, setMatchState] = useState<PublicMatchState | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
   const [pendingRoomCode, setPendingRoomCode] = useState<string | null>(null);
+  const [pendingRoomMode, setPendingRoomMode] = useState<GameMode>('classic');
   const [banners, setBanners] = useState<BannerMessage[]>([]);
 
   // Helper functions for banners
@@ -60,10 +61,14 @@ function App() {
   };
 
   // Parse URL for room query parameter
-  const parseRoomQueryParam = (): string | null => {
+  const parseRoomQueryParam = (): { roomCode: string | null; mode: GameMode } => {
     const urlParams = new URLSearchParams(window.location.search);
     const roomCode = urlParams.get('room');
-    return roomCode ? roomCode.toUpperCase() : null;
+    const mode = urlParams.get('mode');
+    return {
+      roomCode: roomCode ? roomCode.toUpperCase() : null,
+      mode: (mode === 'timed' ? 'timed' : 'classic') as GameMode
+    };
   };
 
   // Clear room query parameter from URL
@@ -105,6 +110,7 @@ function App() {
           setView('lobby');
           setMatchState(null);
           setPendingRoomCode(null);
+          setPendingRoomMode('classic');
           break;
       }
     };
@@ -118,18 +124,30 @@ function App() {
       setNickname(identity.nickname);
 
       // Check for room query intent first
-      const roomCodeFromUrl = parseRoomQueryParam();
+      const { roomCode: roomCodeFromUrl, mode: modeFromUrl } = parseRoomQueryParam();
       const roomQueryIntent = nakamaClient.getRoomQueryIntent();
       
       // Determine which flow to follow
       const handleBootFlow = async () => {
         // Priority: Room query intent from URL (if not already consumed)
         if (roomCodeFromUrl && (!roomQueryIntent || !roomQueryIntent.consumed)) {
-          console.log('DEBUG App: Room query intent from URL:', roomCodeFromUrl);
+          console.log('DEBUG App: Room query intent from URL:', roomCodeFromUrl, 'mode:', modeFromUrl);
           nakamaClient.setRoomQueryIntent(roomCodeFromUrl);
-          setView('lobby');
+          // Ensure connected first
           await nakamaClient.ensureConnected();
-          return;
+          // Try to join the room immediately
+          const joinResult = await nakamaClient.joinRoomByCode({ roomCode: roomCodeFromUrl });
+          if (joinResult.success && joinResult.data) {
+            // Auto-join the match
+            await handleJoinMatch(joinResult.data.matchId, joinResult.data.roomCode, joinResult.data.mode);
+            return;
+          } else {
+            // Join failed, go to lobby with room code pre-filled
+            setView('lobby');
+            // Set pending mode from URL for placeholder
+            setPendingRoomMode(modeFromUrl);
+            return;
+          }
         }
         
         // Check if we have an active match to resume
@@ -188,9 +206,10 @@ function App() {
     setIsSubmitting(false);
   };
 
-  const handleJoinMatch = async (matchId: string, roomCode?: string) => {
+  const handleJoinMatch = async (matchId: string, roomCode?: string, mode?: GameMode) => {
     setMatchError(null);
     setPendingRoomCode(roomCode || null);
+    setPendingRoomMode(mode || 'classic');
     
     // Clear room query intent if this is a successful join
     if (roomCode) {
@@ -218,6 +237,7 @@ function App() {
     setMatchState(null);
     setMatchError(null);
     setPendingRoomCode(null);
+    setPendingRoomMode('classic');
     setView('lobby');
     clearBanners();
   };
@@ -322,7 +342,7 @@ function App() {
           const placeholderState: PublicMatchState = {
             matchId: ctx.matchId,
             roomCode,
-            mode: 'classic',
+            mode: pendingRoomMode,
             phase: 'waiting_for_opponent',
             board: Array(9).fill(null),
             playerX: null,

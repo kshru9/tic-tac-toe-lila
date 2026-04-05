@@ -3,7 +3,7 @@ import { nakamaClient } from './nakamaClient';
 import { ConnectionState, RoomSummary, RoomQueryIntent, GameMode } from './types';
 
 interface LobbyProps {
-  onJoinMatch?: (matchId: string, roomCode?: string) => void;
+  onJoinMatch?: (matchId: string, roomCode?: string, mode?: GameMode) => void;
 }
 
 function Lobby({ onJoinMatch }: LobbyProps) {
@@ -50,7 +50,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     if (result.success && result.data) {
       showStatus(`Match found (${result.data.roomCode})! Joining...`);
       if (onJoinMatch) {
-        onJoinMatch(result.data.matchId, result.data.roomCode);
+        onJoinMatch(result.data.matchId, result.data.roomCode, result.data.mode);
       }
     } else {
       showError(result.message || 'Failed to find match');
@@ -85,14 +85,15 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   };
 
   const handleJoinCreatedRoom = () => {
-    if (createdRoomInfo && onJoinMatch) {
-      onJoinMatch(createdRoomInfo.matchId, createdRoomInfo.roomCode);
-    }
+      if (createdRoomInfo && onJoinMatch) {
+        onJoinMatch(createdRoomInfo.matchId, createdRoomInfo.roomCode, selectedMode);
+      }
   };
 
-  const getShareableUrl = (roomCode: string): string => {
+  const getShareableUrl = (roomCode: string, mode: GameMode): string => {
     const url = new URL(window.location.href);
     url.searchParams.set('room', roomCode);
+    url.searchParams.set('mode', mode);
     return url.toString();
   };
 
@@ -131,7 +132,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
         setRoomQueryIntent(null);
       }
       if (onJoinMatch) {
-        onJoinMatch(result.data.matchId, roomCode.trim());
+        onJoinMatch(result.data.matchId, roomCode.trim(), result.data.mode);
       }
     } else {
       showError(result.message || 'Failed to join room');
@@ -270,13 +271,13 @@ function Lobby({ onJoinMatch }: LobbyProps) {
                   <input
                     type="text"
                     readOnly
-                    value={getShareableUrl(createdRoomInfo.roomCode)}
+                    value={getShareableUrl(createdRoomInfo.roomCode, selectedMode)}
                     className="input input--code"
                   />
                   <button
                     type="button"
                     className="btn btn--tertiary"
-                    onClick={() => copyToClipboard(getShareableUrl(createdRoomInfo.roomCode))}
+                    onClick={() => copyToClipboard(getShareableUrl(createdRoomInfo.roomCode, selectedMode))}
                   >
                     Copy
                   </button>
@@ -361,7 +362,7 @@ function Lobby({ onJoinMatch }: LobbyProps) {
                   className="btn btn--primary"
                   onClick={() => {
                     if (onJoinMatch) {
-                      onJoinMatch(room.matchId, room.roomCode);
+                      onJoinMatch(room.matchId, room.roomCode, room.mode);
                     }
                   }}
                   disabled={!isConnected}
