@@ -728,6 +728,37 @@ body {
   border-left: 3px solid var(--accent-danger);
 }
 
+/* Deep link status */
+.lobby-deep-link-status {
+  margin-bottom: 20px;
+}
+
+.lobby-deep-link-status__content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lobby-deep-link-status__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.lobby-deep-link-status__error span {
+  flex: 1;
+  color: #fecaca;
+  font-size: 0.875rem;
+}
+
+.lobby-deep-link-status__loading {
+  font-size: 0.875rem;
+  color: var(--accent-primary);
+  margin-top: 4px;
+}
+
 .lobby-loading {
   text-align: center;
   padding: 20px;

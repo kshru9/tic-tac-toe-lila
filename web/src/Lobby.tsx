@@ -4,9 +4,21 @@ import { ConnectionState, RoomSummary, RoomQueryIntent, GameMode } from './types
 
 interface LobbyProps {
   onJoinMatch?: (matchId: string, roomCode?: string, mode?: GameMode) => void;
+  pendingDeepLinkRoomCode?: string | null;
+  pendingDeepLinkMode?: GameMode;
+  deepLinkJoinError?: string | null;
+  isAttemptingDeepLinkJoin?: boolean;
+  onRetryDeepLinkJoin?: () => void;
 }
 
-function Lobby({ onJoinMatch }: LobbyProps) {
+function Lobby({ 
+  onJoinMatch, 
+  pendingDeepLinkRoomCode,
+  pendingDeepLinkMode = 'classic',
+  deepLinkJoinError,
+  isAttemptingDeepLinkJoin = false,
+  onRetryDeepLinkJoin 
+}: LobbyProps) {
   const [roomCode, setRoomCode] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -208,6 +220,37 @@ function Lobby({ onJoinMatch }: LobbyProps) {
         <h2 className="lobby__welcome">Welcome, {nickname}!</h2>
         <p className="lobby__tagline">Choose how you want to play</p>
       </div>
+
+      {/* Deep link join status */}
+      {pendingDeepLinkRoomCode && (
+        <div className="lobby-deep-link-status">
+          <div className="lobby-banner lobby-banner--info">
+            <div className="lobby-deep-link-status__content">
+              <span>
+                Joining room <strong>{pendingDeepLinkRoomCode}</strong> ({pendingDeepLinkMode} mode)
+              </span>
+              {deepLinkJoinError && (
+                <div className="lobby-deep-link-status__error">
+                  <span>{deepLinkJoinError}</span>
+                  {onRetryDeepLinkJoin && (
+                    <button
+                      type="button"
+                      className="btn btn--tertiary btn--small"
+                      onClick={onRetryDeepLinkJoin}
+                      disabled={isAttemptingDeepLinkJoin || !isConnected}
+                    >
+                      {isAttemptingDeepLinkJoin ? 'Retrying...' : 'Retry'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {isAttemptingDeepLinkJoin && !deepLinkJoinError && (
+                <div className="lobby-deep-link-status__loading">Joining...</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="lobby-mode-selector">
         <div className="lobby-mode-selector__label">Game Mode:</div>

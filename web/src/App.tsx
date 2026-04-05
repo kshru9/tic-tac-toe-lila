@@ -29,6 +29,11 @@ function App() {
   const [pendingRoomCode, setPendingRoomCode] = useState<string | null>(null);
   const [pendingRoomMode, setPendingRoomMode] = useState<GameMode>('classic');
   const [banners, setBanners] = useState<BannerMessage[]>([]);
+  // Deep link joining state
+  const [pendingDeepLinkRoomCode, setPendingDeepLinkRoomCode] = useState<string | null>(null);
+  const [pendingDeepLinkMode, setPendingDeepLinkMode] = useState<GameMode>('classic');
+  const [deepLinkJoinError, setDeepLinkJoinError] = useState<string | null>(null);
+  const [isAttemptingDeepLinkJoin, setIsAttemptingDeepLinkJoin] = useState(false);
 
   // Helper functions for banners
   const addBanner = (type: BannerType, message: string, autoDismiss = true) => {
@@ -71,10 +76,11 @@ function App() {
     };
   };
 
-  // Clear room query parameter from URL
-  const clearRoomQueryParam = () => {
+  // Clear room query parameters from URL
+  const clearRoomQueryParams = () => {
     const url = new URL(window.location.href);
     url.searchParams.delete('room');
+    url.searchParams.delete('mode');
     window.history.replaceState({}, '', url.toString());
   };
 
@@ -118,38 +124,23 @@ function App() {
     nakamaClient.addConnectionStateListener(handleConnectionStateChange);
     nakamaClient.addMatchEventListener(handleMatchEvent);
 
+    // Parse URL for deep link intent on initial mount
+    const { roomCode: roomCodeFromUrl, mode: modeFromUrl } = parseRoomQueryParam();
+    if (roomCodeFromUrl) {
+      console.log('DEBUG App: Deep link detected from URL:', roomCodeFromUrl, 'mode:', modeFromUrl);
+      setPendingDeepLinkRoomCode(roomCodeFromUrl);
+      setPendingDeepLinkMode(modeFromUrl);
+      // Store intent in nakamaClient for Lobby to use
+      nakamaClient.setRoomQueryIntent(roomCodeFromUrl);
+    }
+
     // Check if we have a stored identity
     const identity = nakamaClient.getIdentity();
     if (identity) {
       setNickname(identity.nickname);
 
-      // Check for room query intent first
-      const { roomCode: roomCodeFromUrl, mode: modeFromUrl } = parseRoomQueryParam();
-      const roomQueryIntent = nakamaClient.getRoomQueryIntent();
-      
-      // Determine which flow to follow
+      // Async boot flow
       const handleBootFlow = async () => {
-        // Priority: Room query intent from URL (if not already consumed)
-        if (roomCodeFromUrl && (!roomQueryIntent || !roomQueryIntent.consumed)) {
-          console.log('DEBUG App: Room query intent from URL:', roomCodeFromUrl, 'mode:', modeFromUrl);
-          nakamaClient.setRoomQueryIntent(roomCodeFromUrl);
-          // Ensure connected first
-          await nakamaClient.ensureConnected();
-          // Try to join the room immediately
-          const joinResult = await nakamaClient.joinRoomByCode({ roomCode: roomCodeFromUrl });
-          if (joinResult.success && joinResult.data) {
-            // Auto-join the match
-            await handleJoinMatch(joinResult.data.matchId, joinResult.data.roomCode, joinResult.data.mode);
-            return;
-          } else {
-            // Join failed, go to lobby with room code pre-filled
-            setView('lobby');
-            // Set pending mode from URL for placeholder
-            setPendingRoomMode(modeFromUrl);
-            return;
-          }
-        }
-        
         // Check if we have an active match to resume
         const activeMatch = nakamaClient.getActiveMatchContext();
         if (activeMatch?.matchId) {
@@ -184,6 +175,49 @@ function App() {
     };
   }, []);
 
+  // Effect to attempt deep link join when conditions are met
+  useEffect(() => {
+    const attemptDeepLinkJoin = async () => {
+      if (!pendingDeepLinkRoomCode || isAttemptingDeepLinkJoin) return;
+      if (connectionState !== 'connected') return;
+      if (!nakamaClient.getIdentity()) return;
+
+      console.log('DEBUG App: Attempting deep link join for room:', pendingDeepLinkRoomCode);
+      setIsAttemptingDeepLinkJoin(true);
+      setDeepLinkJoinError(null);
+
+      try {
+        const joinResult = await nakamaClient.joinRoomByCode({ roomCode: pendingDeepLinkRoomCode });
+        
+        if (joinResult.success && joinResult.data) {
+          console.log('DEBUG App: Deep link join successful', joinResult.data);
+          // Clear the pending deep link
+          setPendingDeepLinkRoomCode(null);
+          setPendingDeepLinkMode('classic');
+          // Clear URL params
+          clearRoomQueryParams();
+          // Consume the room query intent
+          nakamaClient.consumeRoomQueryIntent();
+          // Join the match
+          await handleJoinMatch(joinResult.data.matchId, joinResult.data.roomCode, joinResult.data.mode);
+        } else {
+          console.log('DEBUG App: Deep link join failed', joinResult.message);
+          setDeepLinkJoinError(joinResult.message || 'Failed to join room');
+          // Keep pending deep link so user can retry
+        }
+      } catch (error) {
+        console.error('DEBUG App: Deep link join error:', error);
+        setDeepLinkJoinError(error instanceof Error ? error.message : 'Unknown error');
+      } finally {
+        setIsAttemptingDeepLinkJoin(false);
+      }
+    };
+
+    if (pendingDeepLinkRoomCode && connectionState === 'connected' && nakamaClient.getIdentity()) {
+      void attemptDeepLinkJoin();
+    }
+  }, [pendingDeepLinkRoomCode, connectionState, isAttemptingDeepLinkJoin]);
+
   const handleNicknameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -211,12 +245,19 @@ function App() {
     setPendingRoomCode(roomCode || null);
     setPendingRoomMode(mode || 'classic');
     
+    // Clear any pending deep link when user manually joins any room
+    if (pendingDeepLinkRoomCode) {
+      setPendingDeepLinkRoomCode(null);
+      setPendingDeepLinkMode('classic');
+      setDeepLinkJoinError(null);
+    }
+    
     // Clear room query intent if this is a successful join
     if (roomCode) {
       const roomQueryIntent = nakamaClient.getRoomQueryIntent();
       if (roomQueryIntent && roomQueryIntent.roomCode === roomCode) {
         nakamaClient.consumeRoomQueryIntent();
-        clearRoomQueryParam();
+        clearRoomQueryParams();
       }
     }
     
@@ -240,6 +281,36 @@ function App() {
     setPendingRoomMode('classic');
     setView('lobby');
     clearBanners();
+  };
+
+  // Manual retry for deep link join
+  const handleRetryDeepLinkJoin = async () => {
+    if (!pendingDeepLinkRoomCode || isAttemptingDeepLinkJoin) return;
+    
+    setIsAttemptingDeepLinkJoin(true);
+    setDeepLinkJoinError(null);
+    
+    try {
+      const joinResult = await nakamaClient.joinRoomByCode({ roomCode: pendingDeepLinkRoomCode });
+      
+      if (joinResult.success && joinResult.data) {
+        // Clear the pending deep link
+        setPendingDeepLinkRoomCode(null);
+        setPendingDeepLinkMode('classic');
+        // Clear URL params
+        clearRoomQueryParams();
+        // Consume the room query intent
+        nakamaClient.consumeRoomQueryIntent();
+        // Join the match
+        await handleJoinMatch(joinResult.data.matchId, joinResult.data.roomCode, joinResult.data.mode);
+      } else {
+        setDeepLinkJoinError(joinResult.message || 'Failed to join room');
+      }
+    } catch (error) {
+      setDeepLinkJoinError(error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setIsAttemptingDeepLinkJoin(false);
+    }
   };
 
   const getConnectionMessage = () => {
@@ -295,35 +366,53 @@ function App() {
 
       case 'nickname_entry':
         return (
-          <form onSubmit={handleNicknameSubmit} className="app-form-stack">
-            <div className="app-field">
-              <label htmlFor="nickname" className="app-field__label">
-                Enter your nickname
-              </label>
-              <input
-                id="nickname"
-                type="text"
-                className="input"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                placeholder="Player123"
-                maxLength={20}
-                autoFocus
-              />
-              {nicknameError && <div className="app-field__error">{nicknameError}</div>}
-            </div>
-            <button
-              type="submit"
-              className="btn btn--primary btn--block"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? 'Connecting...' : 'Continue to Lobby'}
-            </button>
-          </form>
+          <>
+            {pendingDeepLinkRoomCode && (
+              <div className="app-banner app-banner--info" style={{ marginBottom: '1rem' }}>
+                <span className="app-banner__message">
+                  Joining room <strong>{pendingDeepLinkRoomCode}</strong> ({pendingDeepLinkMode} mode) after you continue
+                </span>
+              </div>
+            )}
+            <form onSubmit={handleNicknameSubmit} className="app-form-stack">
+              <div className="app-field">
+                <label htmlFor="nickname" className="app-field__label">
+                  Enter your nickname
+                </label>
+                <input
+                  id="nickname"
+                  type="text"
+                  className="input"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder="Player123"
+                  maxLength={20}
+                  autoFocus
+                />
+                {nicknameError && <div className="app-field__error">{nicknameError}</div>}
+              </div>
+              <button
+                type="submit"
+                className="btn btn--primary btn--block"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Connecting...' : 'Continue to Lobby'}
+              </button>
+            </form>
+          </>
         );
 
       case 'lobby':
-        return <Lobby onJoinMatch={handleJoinMatch} />;
+        return (
+          <Lobby 
+            onJoinMatch={handleJoinMatch}
+            pendingDeepLinkRoomCode={pendingDeepLinkRoomCode}
+            pendingDeepLinkMode={pendingDeepLinkMode}
+            deepLinkJoinError={deepLinkJoinError}
+            isAttemptingDeepLinkJoin={isAttemptingDeepLinkJoin}
+            onRetryDeepLinkJoin={handleRetryDeepLinkJoin}
+          />
+        );
 
       case 'match':
         if (!matchState) {
