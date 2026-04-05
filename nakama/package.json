@@ -1,6 +1,6 @@
 {
   "name": "nakama-runtime",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Nakama TypeScript runtime module for Tic-Tac-Toe",
   "main": "build/index.js",
   "scripts": {

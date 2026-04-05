@@ -16,7 +16,7 @@ type RpcMatchPhase =
 interface MatchLabel {
   roomCode: string;
   visibility: 'public' | 'private';
-  mode: 'classic';
+  mode: 'classic' | 'timed';
   phase: RpcMatchPhase;
   occupancy: 0 | 1 | 2;
   open: boolean;
@@ -69,7 +69,7 @@ function findRoomByCode(nk: nkruntime.Nakama, roomCode: string): nkruntime.Match
 }
 
 // Get joinable public waiting rooms
-function getJoinablePublicRooms(nk: nkruntime.Nakama): nkruntime.MatchList.Match[] {
+function getJoinablePublicRooms(nk: nkruntime.Nakama, mode?: 'classic' | 'timed'): nkruntime.MatchList.Match[] {
   // Public discovery/quick-play should only consider rooms with exactly one seated player.
   const matches = listMatches(nk, 100, true, undefined, 1, 1, undefined);
   const joinableRooms: nkruntime.MatchList.Match[] = [];
@@ -77,7 +77,9 @@ function getJoinablePublicRooms(nk: nkruntime.Nakama): nkruntime.MatchList.Match
   for (const match of matches) {
     const label = parseMatchLabel(match.label || '{}');
     if (label && label.visibility === 'public' && label.open && label.phase === 'waiting_for_opponent') {
-      joinableRooms.push(match);
+      if (!mode || label.mode === mode) {
+        joinableRooms.push(match);
+      }
     }
   }
   
@@ -95,6 +97,9 @@ function createRoomRpc(
     const params = payload ? JSON.parse(payload) : {};
     const nickname = sanitizeNickname(params.nickname || 'Player');
     const isPrivate = params.isPrivate === true;
+    const mode = params.mode === 'timed' ? 'timed' : 'classic';
+    
+    logger.info('createRoomRpc: Creating room with mode=' + mode + ', isPrivate=' + isPrivate);
     
     const roomCode = generateRoomCodeRpc();
     const visibility = isPrivate ? 'private' : 'public';
@@ -104,15 +109,18 @@ function createRoomRpc(
       roomCode,
       visibility,
       creatorUserId: ctx.userId,
-      creatorNickname: nickname
+      creatorNickname: nickname,
+      mode
     });
+    
+    logger.info('createRoomRpc: Created match ' + matchId + ' with mode=' + mode);
     
     return JSON.stringify({
       success: true,
       matchId,
       roomCode,
       isPrivate,
-      mode: 'classic'
+      mode
     });
     
   } catch (error) {
@@ -140,7 +148,7 @@ function joinRoomRpc(
       return JSON.stringify({
         success: false,
         error: 'invalid_room_code',
-        message: 'Invalid room code format'
+        message: 'Invalid room code'
       });
     }
     
@@ -161,18 +169,33 @@ function joinRoomRpc(
       label.phase === 'waiting_for_opponent' &&
       label.open;
     if (!isJoinable) {
-      return JSON.stringify({
-        success: false,
-        error: 'room_not_joinable',
-        message: 'Room is not joinable'
-      });
+      // Provide more specific error messages based on label state
+      if (label && label.occupancy >= 2) {
+        return JSON.stringify({
+          success: false,
+          error: 'room_not_joinable',
+          message: 'Room is full'
+        });
+      } else if (label && label.phase !== 'waiting_for_opponent') {
+        return JSON.stringify({
+          success: false,
+          error: 'room_not_joinable',
+          message: 'Room is no longer available'
+        });
+      } else {
+        return JSON.stringify({
+          success: false,
+          error: 'room_not_joinable',
+          message: 'Room is not joinable'
+        });
+      }
     }
     
     return JSON.stringify({
       success: true,
       matchId: match.matchId,
       roomCode,
-      mode: 'classic'
+      mode: label ? label.mode : 'classic'
     });
     
   } catch (error) {
@@ -193,14 +216,14 @@ function listRoomsRpc(
   payload: string
 ): string {
   try {
-    const joinableRooms = getJoinablePublicRooms(nk);
+    const joinableRooms = getJoinablePublicRooms(nk); // No mode filter for discovery list
     
     const rooms = joinableRooms.map(match => {
       const label = parseMatchLabel(match.label || '{}');
       return {
         matchId: match.matchId,
         roomCode: (label && label.roomCode) ? label.roomCode : 'UNKNOWN',
-        mode: 'classic',
+        mode: (label && label.mode) ? label.mode : 'classic',
         playerCount: (label && label.occupancy) ? label.occupancy : 0,
         maxPlayers: 2
       };
@@ -232,9 +255,10 @@ function quickPlayRpc(
   try {
     const params = payload ? JSON.parse(payload) : {};
     const nickname = sanitizeNickname(params.nickname || 'Player');
+    const mode = params.mode === 'timed' ? 'timed' : 'classic';
     
-    // Look for existing joinable public room
-    const joinableRooms = getJoinablePublicRooms(nk);
+    // Look for existing joinable public room with matching mode
+    const joinableRooms = getJoinablePublicRooms(nk, mode);
     
     if (joinableRooms.length > 0) {
       // Join the first available room
@@ -245,7 +269,7 @@ function quickPlayRpc(
         success: true,
         matchId: match.matchId,
         roomCode: (label && label.roomCode) ? label.roomCode : 'UNKNOWN',
-        mode: 'classic',
+        mode: label ? label.mode : mode,
         joinedExisting: true
       });
     }
@@ -256,14 +280,15 @@ function quickPlayRpc(
       roomCode,
       visibility: 'public',
       creatorUserId: ctx.userId,
-      creatorNickname: nickname
+      creatorNickname: nickname,
+      mode
     });
     
     return JSON.stringify({
       success: true,
       matchId,
       roomCode,
-      mode: 'classic',
+      mode,
       joinedExisting: false
     });
     

@@ -4,8 +4,10 @@
 
 // Constants
 const GRACE_WINDOW_MS = 30000; // 30 seconds for reconnect grace
+const TURN_MS = 30000; // 30 seconds per turn in timed mode
 const ROOM_CODE_LENGTH = 6;
 const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const MAX_ACTION_HISTORY = 30; // Keep last 30 action IDs per player for duplicate detection
 
 // Match op-codes
 const OP_CODE_MOVE_INTENT = 1;
@@ -32,7 +34,7 @@ interface TicTacToeMatchState {
   // Public fields
   matchId: string;
   roomCode: string;
-  mode: 'classic';
+  mode: 'classic' | 'timed';
   phase: MatchPhase;
   board: BoardState;
   playerX: PlayerSeatState | null;
@@ -44,29 +46,39 @@ interface TicTacToeMatchState {
   createdAt: number;
   updatedAt: number;
   reconnectDeadlineAt: number | null;
+  version: number;
+  turnDeadlineAt: number | null;
+  remainingTurnMs: number | null;
   
   // Internal fields
   visibility: 'public' | 'private';
   creatorUserId: string | null;
   creatorNickname: string | null;
+  // Duplicate action tracking
+  lastActionIdsX: string[];
+  lastActionIdsO: string[];
 }
 
 // Move intent payload
 interface MoveIntentPayload {
   index: number;
+  actionId: string;
+  expectedVersion: number;
+  expectedTurn: 'X' | 'O';
 }
 
 // Action rejection payload
 interface ActionRejectPayload {
-  reason: 'not_your_turn' | 'cell_taken' | 'game_not_in_progress' | 'invalid_payload';
+  reason: 'not_your_turn' | 'cell_taken' | 'game_not_in_progress' | 'invalid_payload' | 'reconnect_in_progress' | 'stale_state' | 'duplicate_action';
   message?: string;
+  state?: any; // Public state snapshot
 }
 
 // Match label structure
 interface MatchLabel {
   roomCode: string;
   visibility: 'public' | 'private';
-  mode: 'classic';
+  mode: 'classic' | 'timed';
   phase: MatchPhase;
   occupancy: 0 | 1 | 2;
   open: boolean;
@@ -120,7 +132,10 @@ function getPublicState(state: TicTacToeMatchState): any {
     moveCount: state.moveCount,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
-    reconnectDeadlineAt: state.reconnectDeadlineAt
+    reconnectDeadlineAt: state.reconnectDeadlineAt,
+    version: state.version,
+    turnDeadlineAt: state.turnDeadlineAt,
+    remainingTurnMs: state.remainingTurnMs
   };
 }
 
@@ -174,6 +189,88 @@ function getPlayerSymbol(state: TicTacToeMatchState, userId: string): 'X' | 'O' 
   if (state.playerX && state.playerX.userId === userId) return 'X';
   if (state.playerO && state.playerO.userId === userId) return 'O';
   return null;
+}
+
+/**
+ * Helper to bump version and update timestamp
+ */
+function bumpVersion(state: TicTacToeMatchState): void {
+  state.version++;
+  state.updatedAt = Date.now();
+}
+
+/**
+ * Track action ID for duplicate detection
+ */
+function trackActionId(state: TicTacToeMatchState, symbol: 'X' | 'O', actionId: string): void {
+  const actionIds = symbol === 'X' ? state.lastActionIdsX : state.lastActionIdsO;
+  actionIds.push(actionId);
+  
+  // Keep bounded history
+  if (actionIds.length > MAX_ACTION_HISTORY) {
+    actionIds.shift(); // Remove oldest
+  }
+}
+
+/**
+ * Check if action ID is a duplicate
+ */
+function isDuplicateAction(state: TicTacToeMatchState, symbol: 'X' | 'O', actionId: string): boolean {
+  const actionIds = symbol === 'X' ? state.lastActionIdsX : state.lastActionIdsO;
+  return actionIds.includes(actionId);
+}
+
+/**
+ * Set turn deadline for timed mode
+ */
+function setTurnDeadline(state: TicTacToeMatchState): void {
+  if (state.mode === 'timed' && state.phase === 'in_progress' && state.currentTurn) {
+    state.turnDeadlineAt = Date.now() + TURN_MS;
+    state.remainingTurnMs = null;
+  } else {
+    state.turnDeadlineAt = null;
+    state.remainingTurnMs = null;
+  }
+}
+
+/**
+ * Pause timer during reconnect grace
+ */
+function pauseTimer(state: TicTacToeMatchState): void {
+  if (state.mode === 'timed' && state.turnDeadlineAt) {
+    state.remainingTurnMs = Math.max(0, state.turnDeadlineAt - Date.now());
+    state.turnDeadlineAt = null;
+  }
+}
+
+/**
+ * Resume timer after reconnect
+ */
+function resumeTimer(state: TicTacToeMatchState): void {
+  if (state.mode === 'timed' && state.remainingTurnMs !== null) {
+    if (state.remainingTurnMs <= 0) {
+      // Timeout occurred during pause
+      handleTimeoutForfeit(state);
+    } else {
+      state.turnDeadlineAt = Date.now() + state.remainingTurnMs;
+      state.remainingTurnMs = null;
+    }
+  }
+}
+
+/**
+ * Handle timeout forfeit
+ */
+function handleTimeoutForfeit(state: TicTacToeMatchState): void {
+  if (state.phase !== 'in_progress' || !state.currentTurn) return;
+  
+  state.phase = 'completed';
+  state.outcomeReason = 'timeout_forfeit';
+  state.winner = state.currentTurn === 'X' ? 'O' : 'X';
+  state.currentTurn = null;
+  state.turnDeadlineAt = null;
+  state.remainingTurnMs = null;
+  bumpVersion(state);
 }
 
 /**
@@ -236,12 +333,15 @@ var matchInit = function matchInit(
       ? { userId: creatorUserId, nickname: creatorNickname || 'Player', connected: false }
       : null;
 
+  const mode = (params.mode === 'timed' ? 'timed' : 'classic') as 'classic' | 'timed';
+  logger.info('matchInit: Creating match with mode=' + mode + ', roomCode=' + roomCode);
+  
   const state: TicTacToeMatchState = {
     matchId: ctx.matchId,
-      roomCode,
-      mode: 'classic',
-      phase: 'waiting_for_opponent',
-      board: createEmptyBoard(),
+    roomCode,
+    mode,
+    phase: 'waiting_for_opponent',
+    board: createEmptyBoard(),
     playerX: reservedCreatorSeat,
     playerO: null,
     currentTurn: 'X',
@@ -251,10 +351,15 @@ var matchInit = function matchInit(
     createdAt: Date.now(),
     updatedAt: Date.now(),
     reconnectDeadlineAt: null,
+    version: 1,
+    turnDeadlineAt: null,
+    remainingTurnMs: null,
     visibility,
-	    creatorUserId,
-	    creatorNickname
-	  };
+    creatorUserId,
+    creatorNickname,
+    lastActionIdsX: [],
+    lastActionIdsO: []
+  };
 
 	  // Set initial label via matchInit return contract.
 	  return { state, tickRate: 1, label: buildMatchLabelString(state) };
@@ -332,6 +437,8 @@ var matchJoin = function matchJoin(
       if (state.phase === 'reconnect_grace') {
         state.reconnectDeadlineAt = null;
         state.phase = 'in_progress';
+        // Resume timer for timed mode
+        resumeTimer(state);
       }
     } else {
       // Assign to empty seat
@@ -363,7 +470,10 @@ var matchJoin = function matchJoin(
       state.phase = 'ready';
       // Immediately transition to in_progress for simplicity
       state.phase = 'in_progress';
-      logger.info('Match now has 2 players, transitioning to in_progress');
+      // Set initial turn deadline for timed mode
+      setTurnDeadline(state);
+      bumpVersion(state);
+      logger.info('Match now has 2 players, transitioning to in_progress. Mode: ' + state.mode + ', turnDeadlineAt: ' + state.turnDeadlineAt);
     }
   }
   
@@ -401,6 +511,9 @@ var matchLeave = function matchLeave(
   if (state.phase === 'in_progress') {
     state.phase = 'reconnect_grace';
     state.reconnectDeadlineAt = now + GRACE_WINDOW_MS;
+    // Pause timer for timed mode
+    pauseTimer(state);
+    bumpVersion(state);
   }
   // If match was waiting and a player left, keep waiting
   else if (state.phase === 'waiting_for_opponent') {
@@ -425,12 +538,23 @@ var matchLoop = function matchLoop(
   const now = Date.now();
   state.updatedAt = now;
   
+  // Check for timeout forfeit in timed mode
+  if (state.phase === 'in_progress' && state.mode === 'timed' && state.turnDeadlineAt && now >= state.turnDeadlineAt) {
+    logger.info('DEBUG matchLoop: Timeout forfeit detected for turn ' + state.currentTurn);
+    handleTimeoutForfeit(state);
+    updateMatchLabel(state, dispatcher);
+    broadcastState(state, dispatcher);
+    return { state };
+  }
+  
   // Check reconnect grace expiry
   if (state.phase === 'reconnect_grace' && state.reconnectDeadlineAt && now > state.reconnectDeadlineAt) {
     // Grace period expired, forfeit the match
     state.phase = 'completed';
     state.outcomeReason = 'disconnect_forfeit';
     state.currentTurn = null;
+    state.turnDeadlineAt = null;
+    state.remainingTurnMs = null;
     
     // Determine winner (remaining connected player)
     if (state.playerX && state.playerX.connected) {
@@ -439,10 +563,11 @@ var matchLoop = function matchLoop(
       state.winner = 'O';
     }
     
-	    updateMatchLabel(state, dispatcher);
-	    broadcastState(state, dispatcher);
-	    return { state };
-	  }
+    bumpVersion(state);
+    updateMatchLabel(state, dispatcher);
+    broadcastState(state, dispatcher);
+    return { state };
+  }
   
   // Process incoming messages
   logger.info('DEBUG matchLoop: Processing ' + messages.length + ' messages, match phase: ' + state.phase);
@@ -510,43 +635,124 @@ var matchLoop = function matchLoop(
                    ', playerX userId: ' + (state.playerX?.userId || 'null') + 
                    ', playerO userId: ' + (state.playerO?.userId || 'null'));
         
-        // Validate move
+        // Validate required fields in payload with backward compatibility
+        if (typeof payload.index !== 'number' || payload.index < 0 || payload.index > 8) {
+          logger.info('DEBUG: Rejecting move - invalid index');
+          const rejectPayload: ActionRejectPayload = {
+            reason: 'invalid_payload',
+            message: 'Invalid move payload: missing or invalid index',
+            state: getPublicState(state)
+          };
+          dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
+          continue;
+        }
+        
+        // Backward compatibility: generate missing Gamma 1 fields for old clients
+        const actionId = typeof payload.actionId === 'string' && payload.actionId.trim() 
+          ? payload.actionId 
+          : `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const expectedVersion = typeof payload.expectedVersion === 'number' 
+          ? payload.expectedVersion 
+          : state.version;
+        const expectedTurn = typeof payload.expectedTurn === 'string' && (payload.expectedTurn === 'X' || payload.expectedTurn === 'O')
+          ? payload.expectedTurn
+          : state.currentTurn || 'X';
+        
+        // 1. Check duplicate actionId
+        if (isDuplicateAction(state, senderSymbol, actionId)) {
+          logger.info('DEBUG: Rejecting move - duplicate actionId: ' + actionId);
+          const rejectPayload: ActionRejectPayload = {
+            reason: 'duplicate_action',
+            message: 'Duplicate action',
+            state: getPublicState(state)
+          };
+          dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
+          continue;
+        }
+        
+        // 2. Check expectedVersion mismatch (stale state)
+        if (expectedVersion !== state.version) {
+          logger.info('DEBUG: Rejecting move - stale state. Expected: ' + expectedVersion + ', Actual: ' + state.version);
+          const rejectPayload: ActionRejectPayload = {
+            reason: 'stale_state',
+            message: 'State has changed',
+            state: getPublicState(state)
+          };
+          dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
+          continue;
+        }
+        
+        // 3. Check expectedTurn mismatch
+        if (expectedTurn !== state.currentTurn) {
+          logger.info('DEBUG: Rejecting move - not your turn. Expected: ' + expectedTurn + ', Actual: ' + state.currentTurn);
+          const rejectPayload: ActionRejectPayload = {
+            reason: 'not_your_turn',
+            message: 'Not your turn',
+            state: getPublicState(state)
+          };
+          dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
+          continue;
+        }
+        
+        // 4. Check phase allows moves
+        if (state.phase === 'reconnect_grace') {
+          logger.info('DEBUG: Rejecting move - reconnect grace period. Phase: ' + state.phase);
+          const rejectPayload: ActionRejectPayload = {
+            reason: 'reconnect_in_progress',
+            message: 'Game is in reconnect grace period',
+            state: getPublicState(state)
+          };
+          dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
+          continue;
+        }
+        
         if (state.phase !== 'in_progress') {
           logger.info('DEBUG: Rejecting move - game not in progress. Phase: ' + state.phase);
           const rejectPayload: ActionRejectPayload = {
             reason: 'game_not_in_progress',
-            message: 'Game is not in progress'
+            message: 'Game is not in progress',
+            state: getPublicState(state)
           };
           dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
           continue;
         }
-
+        
+        // 5. Check sender is actually the current turn player
         if (senderSymbol !== state.currentTurn) {
-          logger.info('DEBUG: Rejecting move - not sender\'s turn. Sender: ' + senderSymbol + ', currentTurn: ' + state.currentTurn);
+          logger.info('DEBUG: Rejecting move - sender symbol mismatch. Sender: ' + senderSymbol + ', currentTurn: ' + state.currentTurn);
           const rejectPayload: ActionRejectPayload = {
             reason: 'not_your_turn',
-            message: "It's " + state.currentTurn + "'s turn"
+            message: 'Not your turn',
+            state: getPublicState(state)
           };
           dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
           continue;
         }
-
+        
+        // 6. Check move legality
         if (!isValidCellIndex(payload.index) || !isCellEmpty(state.board, payload.index)) {
           logger.info('DEBUG: Rejecting move - invalid cell. Index: ' + payload.index + 
                      ', isValid: ' + isValidCellIndex(payload.index) +
                      ', isCellEmpty: ' + isCellEmpty(state.board, payload.index));
           const rejectPayload: ActionRejectPayload = {
             reason: 'cell_taken',
-            message: 'Cell is already taken or invalid'
+            message: 'Cell is already taken',
+            state: getPublicState(state)
           };
           dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
           continue;
         }
-
-        logger.info('DEBUG: Applying valid move. Index: ' + payload.index + ', symbol: ' + senderSymbol);
-        // Apply valid move
+        
+        // All validation passed - apply move
+        logger.info('DEBUG: Applying valid move. Index: ' + payload.index + ', symbol: ' + senderSymbol + ', actionId: ' + actionId);
+        
+        // Track action ID to prevent duplicates
+        trackActionId(state, senderSymbol, actionId);
+        
+        // Apply move and bump version
         state.board = applyMove(state.board, payload.index, senderSymbol!);
         state.moveCount++;
+        bumpVersion(state);
         
         // Check for winner or draw
         const outcome = evaluateBoardOutcome(state.board);
@@ -555,10 +761,14 @@ var matchLoop = function matchLoop(
           state.winner = outcome.winner;
           state.outcomeReason = outcome.outcomeReason;
           state.currentTurn = null;
+          state.turnDeadlineAt = null;
+          state.remainingTurnMs = null;
           logger.info('DEBUG: Game completed. Winner: ' + outcome.winner + ', reason: ' + outcome.outcomeReason);
         } else {
           // Switch turn
           state.currentTurn = getNextTurn(state.currentTurn!);
+          // Set new turn deadline for timed mode
+          setTurnDeadline(state);
           logger.info('DEBUG: Turn switched to: ' + state.currentTurn);
         }
         
@@ -572,7 +782,8 @@ var matchLoop = function matchLoop(
                     ', raw data: ' + (typeof message.data === 'string' ? message.data : String(message.data)));
         const rejectPayload: ActionRejectPayload = {
           reason: 'invalid_payload',
-          message: 'Invalid move payload: ' + (error instanceof Error ? error.message : String(error))
+          message: 'Invalid move payload: ' + (error instanceof Error ? error.message : String(error)),
+          state: getPublicState(state)
         };
         dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
       }

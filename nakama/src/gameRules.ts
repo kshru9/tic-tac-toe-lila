@@ -6,7 +6,7 @@
 type CellValue = "X" | "O" | null;
 type BoardState = CellValue[];
 type WinningSymbol = "X" | "O";
-type OutcomeReason = "win_row" | "win_column" | "win_diagonal" | "draw_full_board" | "disconnect_forfeit";
+type OutcomeReason = "win_row" | "win_column" | "win_diagonal" | "draw_full_board" | "disconnect_forfeit" | "timeout_forfeit";
 
 const BOARD_SIZE = 9;
 const ROWS = 3;
