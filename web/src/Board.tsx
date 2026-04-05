@@ -10,7 +10,7 @@ interface BoardProps {
 
 function Board({ board, disabled = false, onCellClick, winningLine = null, pendingCellIndex = null }: BoardProps) {
   const handleCellClick = (index: number) => {
-    if (disabled || board[index] !== null || !onCellClick) {
+    if (!onCellClick) {
       return;
     }
     // Ensure index is valid

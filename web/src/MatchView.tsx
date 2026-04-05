@@ -208,9 +208,8 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       case 'cell_taken':
         return 'Move rejected: that cell is already taken';
       case 'game_not_in_progress':
-        return 'Move rejected: the game is not accepting moves right now';
       case 'reconnect_in_progress':
-        return 'Move rejected: reconnection in progress';
+        return 'Move rejected: the game is not accepting moves right now';
       case 'invalid_payload':
         return 'Move rejected: invalid move';
       default:
@@ -303,35 +302,63 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       pendingMoveIndex,
     });
 
-    // Double-check conditions before sending move
-    if (!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected' || pendingMoveIndex !== null) {
-      console.log('DEBUG handleCellClick: Move blocked', {
-        isGameActive,
-        isYourTurn,
-        isSubmittingMove,
-        connectionState,
-        pendingMoveIndex,
-        reason: !isGameActive
-          ? 'Game not active'
-          : !isYourTurn
-            ? 'Not your turn'
-            : isSubmittingMove
-              ? 'Already submitting'
-              : connectionState !== 'connected'
-                ? 'Not connected'
-                : pendingMoveIndex !== null
-                  ? 'Pending move exists'
-                  : 'Unknown',
-      });
-      return;
-    }
-
     // Validate index
     if (typeof index !== 'number' || index < 0 || index > 8) {
       console.error('DEBUG handleCellClick: Invalid index', index);
       return;
     }
 
+    // Check for locally knowable invalid states and show rejection messages
+    if (connectionState !== 'connected') {
+      console.log('DEBUG handleCellClick: Not connected');
+      setLastActionRejection('Move rejected: not connected to multiplayer service');
+      setTimeout(() => setLastActionRejection(null), 3000);
+      return;
+    }
+
+    if (pendingMoveIndex !== null) {
+      console.log('DEBUG handleCellClick: Already has pending move');
+      setLastActionRejection('Waiting for server confirmation on previous move');
+      setTimeout(() => setLastActionRejection(null), 3000);
+      return;
+    }
+
+    if (isSubmittingMove) {
+      console.log('DEBUG handleCellClick: Already submitting move');
+      setLastActionRejection('Move already in progress');
+      setTimeout(() => setLastActionRejection(null), 3000);
+      return;
+    }
+
+    if (!isGameActive) {
+      console.log('DEBUG handleCellClick: Game not active');
+      const rejectionReason = matchState.phase === 'reconnect_grace' 
+        ? 'reconnect_in_progress' 
+        : 'game_not_in_progress';
+      const rejectionMessage = getRejectionMessage(rejectionReason);
+      setLastActionRejection(rejectionMessage);
+      setTimeout(() => setLastActionRejection(null), 3000);
+      return;
+    }
+
+    if (!isYourTurn) {
+      console.log('DEBUG handleCellClick: Not your turn');
+      const rejectionMessage = getRejectionMessage('not_your_turn');
+      setLastActionRejection(rejectionMessage);
+      setTimeout(() => setLastActionRejection(null), 3000);
+      return;
+    }
+
+    // Check if cell is already occupied
+    if (matchState.board[index] !== null) {
+      console.log('DEBUG handleCellClick: Cell already taken');
+      const rejectionMessage = getRejectionMessage('cell_taken');
+      setLastActionRejection(rejectionMessage);
+      setTimeout(() => setLastActionRejection(null), 3000);
+      return;
+    }
+
+    // All local checks passed, send move to server
     console.log('DEBUG handleCellClick: Sending move');
     setIsSubmittingMove(true);
     setLastActionRejection(null);
