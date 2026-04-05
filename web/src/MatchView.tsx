@@ -113,14 +113,13 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
 
   // Timer effect for timed mode
   useEffect(() => {
-    console.log('DEBUG Timer effect:', {
-      mode: matchState.mode,
-      phase: matchState.phase,
-      turnDeadlineAt: matchState.turnDeadlineAt,
-      remainingTurnMs: matchState.remainingTurnMs,
-      currentTurn: matchState.currentTurn,
-      version: matchState.version
-    });
+    console.log('DEBUG Timer effect: mode=', matchState.mode, 
+                'phase=', matchState.phase, 
+                'turnDeadlineAt=', matchState.turnDeadlineAt,
+                'remainingTurnMs=', matchState.remainingTurnMs,
+                'currentTurn=', matchState.currentTurn,
+                'version=', matchState.version,
+                'full state=', matchState);
     
     if (matchState.mode === 'timed' && 
         matchState.phase === 'in_progress' && 

@@ -494,6 +494,7 @@ class NakamaClient {
       switch (opCode) {
         case 2: // OP_CODE_STATE_SYNC
           console.log('DEBUG handleMatchData: STATE_SYNC for match', matchId, 'state:', parsedData);
+          console.log('DEBUG handleMatchData: Mode=', parsedData.mode, 'turnDeadlineAt=', parsedData.turnDeadlineAt, 'remainingTurnMs=', parsedData.remainingTurnMs);
           const matchState = parsedData as PublicMatchState;
           this.latestMatchState = matchState;
           this.updateMatchContextFromState(matchState);
@@ -610,6 +611,8 @@ class NakamaClient {
         mode: options.gameMode || 'classic'
       };
       
+      console.log('DEBUG quickPlay: Sending payload', payload);
+      
       const result = await this.client.rpc(this.session, 'quick_play', payload as any);
       const rpcResult: QuickPlayRpcResult = this.parseRpcPayload(result.payload, 'quick_play');
       
@@ -659,6 +662,8 @@ class NakamaClient {
         isPrivate: options.isPrivate || false,
         mode: options.mode || 'classic'
       };
+      
+      console.log('DEBUG createRoom: Sending payload', payload);
       
       const result = await this.client.rpc(this.session, 'create_room', payload as any);
       const rpcResult: CreateRoomRpcResult = this.parseRpcPayload(result.payload, 'create_room');
