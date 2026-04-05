@@ -5,6 +5,8 @@
 // Constants
 const GRACE_WINDOW_MS = 30000; // 30 seconds for reconnect grace
 const TURN_MS = 30000; // 30 seconds per turn in timed mode
+const WAITING_ROOM_TTL_MS = 5 * 60 * 1000; // 5 minutes for waiting room expiry (Gamma 2)
+const EMPTY_ROOM_DISSOLVE_MS = 15000; // 15 seconds for empty room dissolve (Gamma 2)
 const ROOM_CODE_LENGTH = 6;
 const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const MAX_ACTION_HISTORY = 30; // Keep last 30 action IDs per player for duplicate detection
@@ -13,6 +15,8 @@ const MAX_ACTION_HISTORY = 30; // Keep last 30 action IDs per player for duplica
 const OP_CODE_MOVE_INTENT = 1;
 const OP_CODE_STATE_SYNC = 2;
 const OP_CODE_ACTION_REJECTED = 3;
+const OP_CODE_REMATCH_REQUEST = 4;
+const OP_CODE_REMATCH_ACCEPT = 5;
 
 // Match phases
 type MatchPhase = 
@@ -57,6 +61,11 @@ interface TicTacToeMatchState {
   // Duplicate action tracking
   lastActionIdsX: string[];
   lastActionIdsO: string[];
+  // Gamma 2: rematch handshake flags
+  rematchRequestedByX: boolean;
+  rematchRequestedByO: boolean;
+  // Gamma 2: empty room dissolve tracking
+  emptySinceAt: number | null;
 }
 
 // Move intent payload
@@ -82,6 +91,8 @@ interface MatchLabel {
   phase: MatchPhase;
   occupancy: 0 | 1 | 2;
   open: boolean;
+  // Gamma 2: waiting room expiry support
+  expiresAt: number | null;
 }
 
 /**
@@ -151,13 +162,20 @@ function buildMatchLabel(state: TicTacToeMatchState): MatchLabel {
     state.phase === 'waiting_for_opponent' &&
     occupancy < 2;
   
+  // Gamma 2: Calculate waiting room expiry timestamp
+  let expiresAt: number | null = null;
+  if (state.phase === 'waiting_for_opponent' && occupancy < 2) {
+    expiresAt = state.createdAt + WAITING_ROOM_TTL_MS;
+  }
+  
   return {
     roomCode: state.roomCode,
     visibility: state.visibility,
     mode: state.mode,
     phase: state.phase,
     occupancy,
-    open
+    open,
+    expiresAt
   };
 }
 
@@ -285,6 +303,14 @@ function canUserJoin(state: TicTacToeMatchState, userId: string): { canJoin: boo
     return { canJoin: true };
   }
   
+  // Gamma 2: Check waiting room expiry
+  if (state.phase === 'waiting_for_opponent') {
+    const waitingRoomExpiryAt = state.createdAt + WAITING_ROOM_TTL_MS;
+    if (Date.now() > waitingRoomExpiryAt) {
+      return { canJoin: false, reason: 'Room has expired' };
+    }
+  }
+  
   // Check if match is joinable
   if (state.phase === 'completed') {
     return { canJoin: false, reason: 'Match is completed' };
@@ -292,6 +318,14 @@ function canUserJoin(state: TicTacToeMatchState, userId: string): { canJoin: boo
   
   if (state.phase === 'reconnect_grace') {
     return { canJoin: false, reason: 'Match is in reconnect grace period' };
+  }
+  
+  // Gamma 2: Check empty room dissolution
+  if (state.emptySinceAt !== null) {
+    const emptyRoomExpiryAt = state.emptySinceAt + EMPTY_ROOM_DISSOLVE_MS;
+    if (Date.now() > emptyRoomExpiryAt) {
+      return { canJoin: false, reason: 'Room has been dissolved' };
+    }
   }
   
   // Check for empty seats
@@ -358,7 +392,11 @@ var matchInit = function matchInit(
     creatorUserId,
     creatorNickname,
     lastActionIdsX: [],
-    lastActionIdsO: []
+    lastActionIdsO: [],
+    // Gamma 2: initialize new fields
+    rematchRequestedByX: false,
+    rematchRequestedByO: false,
+    emptySinceAt: null
   };
 
 	  // Set initial label via matchInit return contract.
@@ -441,7 +479,16 @@ var matchJoin = function matchJoin(
         resumeTimer(state);
       }
     } else {
-      // Assign to empty seat
+      // Gamma 2: Race-hardened seat assignment
+      // Re-check joinability at the moment of actual seat assignment
+      const joinCheck = canUserJoin(state, userId);
+      if (!joinCheck.canJoin) {
+        logger.info('Gamma 2: Join race detected - user ' + userId + ' cannot join anymore');
+        // Skip this user but continue processing other presences
+        continue;
+      }
+      
+      // Assign to empty seat with atomic check
       if (!state.playerX) {
         state.playerX = {
           userId,
@@ -456,6 +503,8 @@ var matchJoin = function matchJoin(
           connected: true
         };
         logger.info('Assigned user ' + userId + ' (' + nickname + ') to O seat');
+      } else {
+        logger.info('Gamma 2: No empty seat available for user ' + userId + ' - race condition');
       }
     }
   }
@@ -504,6 +553,18 @@ var matchLeave = function matchLeave(
       state.playerX.connected = false;
     } else if (symbol === 'O' && state.playerO) {
       state.playerO.connected = false;
+    }
+  }
+
+  // Gamma 2: Clear rematch flags for leaving players
+  for (const presence of presences) {
+    const userId = presence.userId;
+    const symbol = getPlayerSymbol(state, userId);
+    
+    if (symbol === 'X' && state.rematchRequestedByX) {
+      state.rematchRequestedByX = false;
+    } else if (symbol === 'O' && state.rematchRequestedByO) {
+      state.rematchRequestedByO = false;
     }
   }
   
@@ -567,6 +628,69 @@ var matchLoop = function matchLoop(
     updateMatchLabel(state, dispatcher);
     broadcastState(state, dispatcher);
     return { state };
+  }
+
+  // Gamma 2: Check waiting room expiry
+  if (state.phase === 'waiting_for_opponent') {
+    const waitingRoomExpiryAt = state.createdAt + WAITING_ROOM_TTL_MS;
+    if (now > waitingRoomExpiryAt) {
+      logger.info('Gamma 2: Waiting room expired for match ' + state.matchId);
+      // Mark as completed and non-joinable
+      state.phase = 'completed';
+      state.outcomeReason = 'disconnect_forfeit';
+      state.currentTurn = null;
+      state.turnDeadlineAt = null;
+      state.remainingTurnMs = null;
+      bumpVersion(state);
+      updateMatchLabel(state, dispatcher);
+      broadcastState(state, dispatcher);
+      return { state };
+    }
+  }
+
+  // Gamma 2: Check empty room dissolve
+  const hasConnectedPlayers = (state.playerX && state.playerX.connected) || (state.playerO && state.playerO.connected);
+  if (!hasConnectedPlayers) {
+    // No connected players - check if we should start or continue empty room timer
+    if (state.emptySinceAt === null) {
+      // First time we see empty room
+      state.emptySinceAt = now;
+      bumpVersion(state);
+    } else if (now > state.emptySinceAt + EMPTY_ROOM_DISSOLVE_MS) {
+      // Empty room timer expired - dissolve the match
+      logger.info('Gamma 2: Empty room dissolved for match ' + state.matchId);
+      // Match will be terminated by Nakama when we return
+      state.phase = 'completed';
+      state.outcomeReason = 'disconnect_forfeit';
+      state.currentTurn = null;
+      state.turnDeadlineAt = null;
+      state.remainingTurnMs = null;
+      bumpVersion(state);
+      updateMatchLabel(state, dispatcher);
+      broadcastState(state, dispatcher);
+      return { state };
+    }
+  } else {
+    // There are connected players - clear empty room timer
+    if (state.emptySinceAt !== null) {
+      state.emptySinceAt = null;
+      bumpVersion(state);
+    }
+  }
+
+  // Gamma 2: Clear stale rematch flags if player leaves during pending rematch
+  if (state.phase === 'completed' && (state.rematchRequestedByX || state.rematchRequestedByO)) {
+    const xEligible = state.playerX && state.playerX.userId && state.playerX.connected;
+    const oEligible = state.playerO && state.playerO.userId && state.playerO.connected;
+    
+    if (state.rematchRequestedByX && !xEligible) {
+      state.rematchRequestedByX = false;
+      bumpVersion(state);
+    }
+    if (state.rematchRequestedByO && !oEligible) {
+      state.rematchRequestedByO = false;
+      bumpVersion(state);
+    }
   }
   
   // Process incoming messages
@@ -787,6 +911,73 @@ var matchLoop = function matchLoop(
         };
         dispatcher.broadcastMessage(OP_CODE_ACTION_REJECTED, JSON.stringify(rejectPayload), [message.sender]);
       }
+    } else if (message.opCode === OP_CODE_REMATCH_REQUEST || message.opCode === OP_CODE_REMATCH_ACCEPT) {
+      // Gamma 2: Rematch handshake handling
+      logger.info('Gamma 2: Received rematch message, opCode: ' + message.opCode + ', from user: ' + message.sender.userId);
+      
+      // First check if sender is a player in this match
+      const senderSymbol = getPlayerSymbol(state, message.sender.userId);
+      if (!senderSymbol) {
+        logger.info('Gamma 2: Ignoring rematch message - sender ' + message.sender.userId + ' is not a player in this match');
+        continue;
+      }
+      
+      // Rematch only allowed in completed phase
+      if (state.phase !== 'completed') {
+        logger.info('Gamma 2: Ignoring rematch message - match not completed, phase: ' + state.phase);
+        continue;
+      }
+      
+      // Check if player is eligible (has a seat and is connected)
+      const isEligible = (senderSymbol === 'X' && state.playerX && state.playerX.connected) ||
+                         (senderSymbol === 'O' && state.playerO && state.playerO.connected);
+      if (!isEligible) {
+        logger.info('Gamma 2: Ignoring rematch message - player not eligible or disconnected');
+        continue;
+      }
+      
+      // Set rematch flag based on player symbol
+      if (senderSymbol === 'X') {
+        state.rematchRequestedByX = true;
+      } else if (senderSymbol === 'O') {
+        state.rematchRequestedByO = true;
+      }
+      
+      bumpVersion(state);
+      logger.info('Gamma 2: Rematch flag set for ' + senderSymbol + ', X: ' + state.rematchRequestedByX + ', O: ' + state.rematchRequestedByO);
+      
+      // Check if both players have requested rematch
+      if (state.rematchRequestedByX && state.rematchRequestedByO) {
+        logger.info('Gamma 2: Both players agreed to rematch - resetting game');
+        
+        // Reset game state
+        state.board = createEmptyBoard();
+        state.winner = null;
+        state.outcomeReason = null;
+        state.moveCount = 0;
+        state.phase = 'in_progress';
+        state.currentTurn = 'X';
+        state.reconnectDeadlineAt = null;
+        state.remainingTurnMs = null;
+        
+        // Clear rematch flags
+        state.rematchRequestedByX = false;
+        state.rematchRequestedByO = false;
+        
+        // Set turn deadline for timed mode
+        if (state.mode === 'timed') {
+          state.turnDeadlineAt = now + TURN_MS;
+        } else {
+          state.turnDeadlineAt = null;
+        }
+        
+        bumpVersion(state);
+        logger.info('Gamma 2: Game reset for rematch, new phase: ' + state.phase + ', mode: ' + state.mode);
+      }
+      
+      // Broadcast updated state
+      updateMatchLabel(state, dispatcher);
+      broadcastState(state, dispatcher);
     }
   }
   

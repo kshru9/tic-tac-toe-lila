@@ -20,6 +20,8 @@ interface MatchLabel {
   phase: RpcMatchPhase;
   occupancy: 0 | 1 | 2;
   open: boolean;
+  // Gamma 2: waiting room expiry support
+  expiresAt: number | null;
 }
 
 function generateRoomCodeRpc(): string {
@@ -73,10 +75,16 @@ function getJoinablePublicRooms(nk: nkruntime.Nakama, mode?: 'classic' | 'timed'
   // Public discovery/quick-play should only consider rooms with exactly one seated player.
   const matches = listMatches(nk, 100, true, undefined, 1, 1, undefined);
   const joinableRooms: nkruntime.MatchList.Match[] = [];
+  const now = Date.now();
   
   for (const match of matches) {
     const label = parseMatchLabel(match.label || '{}');
     if (label && label.visibility === 'public' && label.open && label.phase === 'waiting_for_opponent') {
+      // Gamma 2: Filter out expired waiting rooms
+      if (label.expiresAt && now > label.expiresAt) {
+        continue; // Room has expired, skip it
+      }
+      
       if (!mode || label.mode === mode) {
         joinableRooms.push(match);
       }
@@ -163,11 +171,14 @@ function joinRoomRpc(
     
     // Check if room is joinable by parsing label
     const label = parseMatchLabel(match.label || '{}');
+    const now = Date.now();
     const isJoinable =
       !!label &&
       label.occupancy < 2 &&
       label.phase === 'waiting_for_opponent' &&
-      label.open;
+      label.open &&
+      // Gamma 2: Check waiting room expiry
+      (!label.expiresAt || now <= label.expiresAt);
     if (!isJoinable) {
       // Provide more specific error messages based on label state
       if (label && label.occupancy >= 2) {
@@ -181,6 +192,13 @@ function joinRoomRpc(
           success: false,
           error: 'room_not_joinable',
           message: 'Room is no longer available'
+        });
+      } else if (label && label.expiresAt && now > label.expiresAt) {
+        // Gamma 2: Specific error for expired waiting room
+        return JSON.stringify({
+          success: false,
+          error: 'room_not_joinable',
+          message: 'Room has expired'
         });
       } else {
         return JSON.stringify({
