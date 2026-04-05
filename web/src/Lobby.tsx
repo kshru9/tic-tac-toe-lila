@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { nakamaClient } from './nakamaClient';
-import { ConnectionState, RoomSummary } from './types';
+import { ConnectionState, RoomSummary, RoomQueryIntent } from './types';
 
 interface LobbyProps {
   onJoinMatch?: (matchId: string, roomCode?: string) => void;
@@ -14,6 +14,8 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [isRefreshingRooms, setIsRefreshingRooms] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>(nakamaClient.getConnectionState());
+  const [createdRoomInfo, setCreatedRoomInfo] = useState<{ roomCode: string; matchId: string } | null>(null);
+  const [roomQueryIntent, setRoomQueryIntent] = useState<RoomQueryIntent | null>(null);
 
   const nickname = nakamaClient.getNickname();
   const isConnected = connectionState === 'connected';
@@ -68,15 +70,39 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     const result = await nakamaClient.createRoom({ isPrivate: true });
 
     if (result.success && result.data) {
-      showStatus(`Room ${result.data.roomCode} created! Joining...`);
-      if (onJoinMatch) {
-        onJoinMatch(result.data.matchId, result.data.roomCode);
-      }
+      setCreatedRoomInfo({
+        roomCode: result.data.roomCode,
+        matchId: result.data.matchId
+      });
+      showStatus(`Room ${result.data.roomCode} created!`);
+      // Don't auto-join, let user share the room first
     } else {
       showError(result.message || 'Failed to create room');
     }
 
     setIsLoading(false);
+  };
+
+  const handleJoinCreatedRoom = () => {
+    if (createdRoomInfo && onJoinMatch) {
+      onJoinMatch(createdRoomInfo.matchId, createdRoomInfo.roomCode);
+    }
+  };
+
+  const getShareableUrl = (roomCode: string): string => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', roomCode);
+    return url.toString();
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showStatus('Copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      showError('Failed to copy to clipboard');
+    }
   };
 
   const handleJoinRoom = async () => {
@@ -98,11 +124,22 @@ function Lobby({ onJoinMatch }: LobbyProps) {
     if (result.success && result.data) {
       showStatus('Joined room!');
       setRoomCode('');
+      // Clear room query intent if this was from a link
+      if (roomQueryIntent && roomQueryIntent.roomCode === roomCode.trim()) {
+        nakamaClient.consumeRoomQueryIntent();
+        setRoomQueryIntent(null);
+      }
       if (onJoinMatch) {
         onJoinMatch(result.data.matchId, roomCode.trim());
       }
     } else {
       showError(result.message || 'Failed to join room');
+      // If this was a room query intent that failed, mark it as consumed to avoid loops
+      if (roomQueryIntent && roomQueryIntent.roomCode === roomCode.trim()) {
+        nakamaClient.consumeRoomQueryIntent();
+        setRoomQueryIntent(null);
+        showError(`${result.message}. The room link has been cleared.`);
+      }
     }
 
     setIsLoading(false);
@@ -135,6 +172,17 @@ function Lobby({ onJoinMatch }: LobbyProps) {
   useEffect(() => {
     if (isConnected) {
       handleRefreshRooms();
+    }
+  }, []);
+
+  // Check for room query intent on mount
+  useEffect(() => {
+    const intent = nakamaClient.getRoomQueryIntent();
+    if (intent && !intent.consumed) {
+      setRoomQueryIntent(intent);
+      // Auto-fill the room code
+      setRoomCode(intent.roomCode);
+      showStatus(`Room ${intent.roomCode} detected from link. Click Join to enter.`);
     }
   }, []);
 
@@ -175,15 +223,61 @@ function Lobby({ onJoinMatch }: LobbyProps) {
 
         <div className="lobby-action-card lobby-action-card--secondary">
           <h3 className="lobby-action-card__title">Create Room</h3>
-          <button
-            type="button"
-            className="btn btn--secondary btn--block"
-            onClick={handleCreateRoom}
-            disabled={isLoading || !isConnected}
-          >
-            Create Private Room
-          </button>
-          <p className="helper-text">Create a private room and share the code with friends</p>
+          {!createdRoomInfo ? (
+            <>
+              <button
+                type="button"
+                className="btn btn--secondary btn--block"
+                onClick={handleCreateRoom}
+                disabled={isLoading || !isConnected}
+              >
+                Create Private Room
+              </button>
+              <p className="helper-text">Create a private room and share the code with friends</p>
+            </>
+          ) : (
+            <div className="lobby-room-created">
+              <div className="lobby-room-created__code">
+                <span className="lobby-room-created__label">Room Code:</span>
+                <span className="lobby-room-created__value">{createdRoomInfo.roomCode}</span>
+              </div>
+              <div className="lobby-room-created__share">
+                <span className="lobby-room-created__label">Share Link:</span>
+                <div className="lobby-room-created__url">
+                  <input
+                    type="text"
+                    readOnly
+                    value={getShareableUrl(createdRoomInfo.roomCode)}
+                    className="input input--code"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--tertiary"
+                    onClick={() => copyToClipboard(getShareableUrl(createdRoomInfo.roomCode))}
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <div className="lobby-room-created__actions">
+                <button
+                  type="button"
+                  className="btn btn--primary btn--block"
+                  onClick={handleJoinCreatedRoom}
+                  disabled={!isConnected}
+                >
+                  Join Room
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--muted btn--block"
+                  onClick={() => setCreatedRoomInfo(null)}
+                >
+                  Create Another
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="lobby-action-card">

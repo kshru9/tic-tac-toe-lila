@@ -5,9 +5,10 @@ interface BoardProps {
   disabled?: boolean;
   onCellClick?: (index: number) => void;
   winningLine?: number[] | null;
+  pendingCellIndex?: number | null;
 }
 
-function Board({ board, disabled = false, onCellClick, winningLine = null }: BoardProps) {
+function Board({ board, disabled = false, onCellClick, winningLine = null, pendingCellIndex = null }: BoardProps) {
   const handleCellClick = (index: number) => {
     if (disabled || board[index] !== null || !onCellClick) {
       return;
@@ -31,6 +32,7 @@ function Board({ board, disabled = false, onCellClick, winningLine = null }: Boa
     if (value !== null) parts.push('board-cell--filled');
     if (disabled || value !== null) parts.push('board-cell--disabled');
     if (isWinningCell(index)) parts.push('board-cell--winning');
+    if (pendingCellIndex === index) parts.push('board-cell--pending');
     return parts.join(' ');
   }
 

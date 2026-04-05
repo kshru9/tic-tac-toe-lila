@@ -17,7 +17,10 @@ import {
   MatchEventType,
   ActiveMatchContext,
   MoveIntentPayload,
-  ActionRejectPayload
+  ActionRejectPayload,
+  PendingMove,
+  RoomQueryIntent,
+  ResumeAttemptResult
 } from './types';
 
 // Configuration from environment
@@ -34,6 +37,8 @@ const STORAGE_KEYS = {
   CLIENT_SESSION: 'lila_tictactoe_client_session',
   DEVICE_ID: 'lila_tictactoe_device_id',
   ACTIVE_MATCH: 'lila_tictactoe_active_match',
+  ROOM_QUERY_INTENT: 'lila_tictactoe_room_query_intent',
+  PENDING_MOVE: 'lila_tictactoe_pending_move',
 };
 
 // Generate or retrieve device ID
@@ -118,6 +123,53 @@ function saveActiveMatch(match: ActiveMatchContext | null): void {
   }
 }
 
+// Load room query intent from storage
+function loadRoomQueryIntent(): RoomQueryIntent | null {
+  const stored = localStorage.getItem(STORAGE_KEYS.ROOM_QUERY_INTENT);
+  if (!stored) return null;
+  
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+}
+
+// Save room query intent to storage
+function saveRoomQueryIntent(intent: RoomQueryIntent | null): void {
+  if (intent) {
+    localStorage.setItem(STORAGE_KEYS.ROOM_QUERY_INTENT, JSON.stringify(intent));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.ROOM_QUERY_INTENT);
+  }
+}
+
+// Load pending move from storage
+function loadPendingMove(): PendingMove | null {
+  const stored = localStorage.getItem(STORAGE_KEYS.PENDING_MOVE);
+  if (!stored) return null;
+  
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+}
+
+// Save pending move to storage
+function savePendingMove(pendingMove: PendingMove | null): void {
+  if (pendingMove) {
+    localStorage.setItem(STORAGE_KEYS.PENDING_MOVE, JSON.stringify(pendingMove));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.PENDING_MOVE);
+  }
+}
+
+// Clear pending move (convenience function)
+function clearPendingMove(): void {
+  localStorage.removeItem(STORAGE_KEYS.PENDING_MOVE);
+}
+
 
 class NakamaClient {
   private client: Client;
@@ -129,6 +181,8 @@ class NakamaClient {
   private lastConnectionError: string | null = null;
   private matchEventListeners: ((event: MatchEvent) => void)[] = [];
   private activeMatchContext: ActiveMatchContext | null = null;
+  private pendingMove: PendingMove | null = null;
+  private roomQueryIntent: RoomQueryIntent | null = null;
 
   constructor() {
     this.client = new Client(
@@ -148,6 +202,18 @@ class NakamaClient {
     const storedMatch = loadActiveMatch();
     if (storedMatch) {
       this.activeMatchContext = storedMatch;
+    }
+    
+    // Try to restore pending move from storage
+    const storedPendingMove = loadPendingMove();
+    if (storedPendingMove) {
+      this.pendingMove = storedPendingMove;
+    }
+    
+    // Try to restore room query intent from storage
+    const storedRoomQueryIntent = loadRoomQueryIntent();
+    if (storedRoomQueryIntent) {
+      this.roomQueryIntent = storedRoomQueryIntent;
     }
   }
 
@@ -202,6 +268,48 @@ class NakamaClient {
 
   getActiveMatchContext(): ActiveMatchContext | null {
     return this.activeMatchContext;
+  }
+
+  getPendingMove(): PendingMove | null {
+    return this.pendingMove;
+  }
+
+  setPendingMove(index: number): void {
+    this.pendingMove = {
+      index,
+      timestamp: Date.now()
+    };
+    savePendingMove(this.pendingMove);
+  }
+
+  clearPendingMove(): void {
+    this.pendingMove = null;
+    clearPendingMove();
+  }
+
+  getRoomQueryIntent(): RoomQueryIntent | null {
+    return this.roomQueryIntent;
+  }
+
+  setRoomQueryIntent(roomCode: string): void {
+    this.roomQueryIntent = {
+      roomCode,
+      consumed: false
+    };
+    saveRoomQueryIntent(this.roomQueryIntent);
+  }
+
+  consumeRoomQueryIntent(): void {
+    if (this.roomQueryIntent) {
+      this.roomQueryIntent.consumed = true;
+      this.roomQueryIntent.attemptedAt = Date.now();
+      saveRoomQueryIntent(this.roomQueryIntent);
+    }
+  }
+
+  clearRoomQueryIntent(): void {
+    this.roomQueryIntent = null;
+    saveRoomQueryIntent(null);
   }
 
   // Bootstrap and authentication
@@ -377,11 +485,30 @@ class NakamaClient {
           console.log('DEBUG handleMatchData: STATE_SYNC for match', matchId, 'state:', parsedData);
           const matchState = parsedData as PublicMatchState;
           this.updateMatchContextFromState(matchState);
+          
+          // Clear pending move on state sync if it matches the pending move index
+          if (this.pendingMove && this.activeMatchContext?.matchId === matchId) {
+            // Check if the pending move index is now occupied in the board
+            if (matchState.board[this.pendingMove.index] !== null) {
+              console.log('DEBUG handleMatchData: Clearing pending move - move accepted', this.pendingMove);
+              this.clearPendingMove();
+            } else if (matchState.phase === 'completed' || matchState.phase === 'reconnect_grace') {
+              // Clear pending move if game ended or is in reconnect grace
+              console.log('DEBUG handleMatchData: Clearing pending move - game state changed', this.pendingMove);
+              this.clearPendingMove();
+            }
+          }
+          
           this.emitMatchEvent('state_sync', matchState);
           break;
           
         case 3: // OP_CODE_ACTION_REJECTED
           console.log('DEBUG handleMatchData: ACTION_REJECTED for match', matchId, 'reason:', parsedData.reason, 'message:', parsedData.message);
+          // Clear pending move on rejection
+          if (this.pendingMove && this.activeMatchContext?.matchId === matchId) {
+            console.log('DEBUG handleMatchData: Clearing pending move - action rejected', this.pendingMove);
+            this.clearPendingMove();
+          }
           this.emitMatchEvent('action_rejected', parsedData as ActionRejectPayload);
           break;
           
@@ -726,7 +853,19 @@ class NakamaClient {
       };
     }
 
+    // Check if there's already a pending move
+    if (this.pendingMove) {
+      console.log('DEBUG sendMoveIntent: Already has pending move', this.pendingMove);
+      return {
+        success: false,
+        message: 'Waiting for server confirmation on previous move',
+      };
+    }
+
     try {
+      // Set pending move before sending
+      this.setPendingMove(index);
+      
       const payload: MoveIntentPayload = { index };
       const payloadStr = JSON.stringify(payload);
       console.log('DEBUG sendMoveIntent: Sending move', {
@@ -751,6 +890,8 @@ class NakamaClient {
         message: 'Move sent',
       };
     } catch (error) {
+      // Clear pending move on error
+      this.clearPendingMove();
       console.error('DEBUG sendMoveIntent: Error sending move:', error);
       return {
         success: false,
@@ -774,9 +915,10 @@ class NakamaClient {
       }
     }
     
-    console.log('DEBUG leaveMatch: Clearing activeMatchContext');
+    console.log('DEBUG leaveMatch: Clearing activeMatchContext and pending move');
     this.activeMatchContext = null;
     saveActiveMatch(null); // Clear from storage
+    this.clearPendingMove(); // Clear any pending move
     this.emitMatchEvent('match_left', {});
   }
 
@@ -838,6 +980,64 @@ class NakamaClient {
 
   getUserId(): string | null {
     return this.session?.user_id || null;
+  }
+
+  // Attempt to resume a match from stored context
+  async attemptResume(): Promise<ResumeAttemptResult> {
+    if (!this.activeMatchContext?.matchId) {
+      return {
+        success: false,
+        reason: 'could_not_rejoin',
+        message: 'No active match to resume'
+      };
+    }
+
+    if (this.connectionState !== 'connected') {
+      const connectResult = await this.ensureConnected();
+      if (!connectResult.success) {
+        return {
+          success: false,
+          reason: 'could_not_rejoin',
+          message: 'Failed to connect to multiplayer service'
+        };
+      }
+    }
+
+    try {
+      const result = await this.joinMatch(this.activeMatchContext.matchId, this.activeMatchContext.roomCode);
+      if (result.success) {
+        return {
+          success: true,
+          message: 'Rejoined your match'
+          // matchState will be populated by state_sync
+        };
+      } else {
+        // If join fails, clear the stale context
+        this.activeMatchContext = null;
+        saveActiveMatch(null);
+        return {
+          success: false,
+          reason: 'room_no_longer_exists',
+          message: 'Could not rejoin the previous match'
+        };
+      }
+    } catch (error) {
+      console.error('Resume attempt error:', error);
+      this.activeMatchContext = null;
+      saveActiveMatch(null);
+      return {
+        success: false,
+        reason: 'could_not_rejoin',
+        message: 'Failed to rejoin match'
+      };
+    }
+  }
+
+  // Clear stale active match context (e.g., when resume fails deterministically)
+  clearStaleActiveMatch(): void {
+    this.activeMatchContext = null;
+    saveActiveMatch(null);
+    this.clearPendingMove();
   }
 }
 

@@ -219,3 +219,65 @@ export interface ActiveMatchContext {
   roomCode: string;
   playerSymbol: 'X' | 'O' | null;
 }
+
+// Pending move state
+export interface PendingMove {
+  index: number;
+  timestamp: number;
+}
+
+// Banner message types
+export type BannerType = 'info' | 'success' | 'warning' | 'error';
+
+export interface BannerMessage {
+  id: string;
+  type: BannerType;
+  message: string;
+  timestamp: number;
+  autoDismiss?: boolean;
+}
+
+// Normalized user-facing reason mappings
+export type UserFacingMoveRejectReason = 
+  | 'not_your_turn'
+  | 'cell_taken'
+  | 'game_not_in_progress'
+  | 'invalid_payload'
+  | 'reconnect_in_progress';
+
+export type UserFacingRoomErrorReason =
+  | 'invalid_room_code'
+  | 'room_not_found'
+  | 'room_full'
+  | 'room_not_joinable'
+  | 'failed_to_create_room'
+  | 'failed_to_join_room'
+  | 'failed_to_list_rooms'
+  | 'failed_to_quick_play';
+
+export type UserFacingResumeErrorReason =
+  | 'could_not_rejoin'
+  | 'room_no_longer_exists'
+  | 'seat_could_not_be_resumed';
+
+export type UserFacingOutcomeReason =
+  | 'win_row'
+  | 'win_column'
+  | 'win_diagonal'
+  | 'draw_full_board'
+  | 'disconnect_forfeit';
+
+// Resume attempt result
+export interface ResumeAttemptResult {
+  success: boolean;
+  reason?: UserFacingResumeErrorReason;
+  message: string;
+  matchState?: PublicMatchState;
+}
+
+// Room query intent (for shareable URLs)
+export interface RoomQueryIntent {
+  roomCode: string;
+  consumed: boolean;
+  attemptedAt?: number;
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import './theme.css';
 import { nakamaClient } from './nakamaClient';
-import { ConnectionState, AppView, PublicMatchState, MatchEvent } from './types';
+import { ConnectionState, AppView, PublicMatchState, MatchEvent, BannerMessage, BannerType } from './types';
 import Lobby from './Lobby';
 import MatchView from './MatchView';
 
@@ -27,6 +27,51 @@ function App() {
   const [matchState, setMatchState] = useState<PublicMatchState | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
   const [pendingRoomCode, setPendingRoomCode] = useState<string | null>(null);
+  const [banners, setBanners] = useState<BannerMessage[]>([]);
+
+  // Helper functions for banners
+  const addBanner = (type: BannerType, message: string, autoDismiss = true) => {
+    const id = `banner-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const banner: BannerMessage = {
+      id,
+      type,
+      message,
+      timestamp: Date.now(),
+      autoDismiss
+    };
+    
+    setBanners(prev => [...prev, banner]);
+    
+    if (autoDismiss) {
+      setTimeout(() => {
+        removeBanner(id);
+      }, 5000);
+    }
+    
+    return id;
+  };
+
+  const removeBanner = (id: string) => {
+    setBanners(prev => prev.filter(banner => banner.id !== id));
+  };
+
+  const clearBanners = () => {
+    setBanners([]);
+  };
+
+  // Parse URL for room query parameter
+  const parseRoomQueryParam = (): string | null => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomCode = urlParams.get('room');
+    return roomCode ? roomCode.toUpperCase() : null;
+  };
+
+  // Clear room query parameter from URL
+  const clearRoomQueryParam = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.replaceState({}, '', url.toString());
+  };
 
   // Subscribe to connection state changes and match events
   useEffect(() => {
@@ -72,24 +117,45 @@ function App() {
     if (identity) {
       setNickname(identity.nickname);
 
-      // Check if we have an active match to resume
-      const activeMatch = nakamaClient.getActiveMatchContext();
-      if (activeMatch?.matchId) {
-        // We have an active match, try to reconnect and resume
-        setView('match');
-        setPendingRoomCode(activeMatch.roomCode);
-        void nakamaClient.ensureConnected().then(() => {
-          // After connection, try to rejoin the match
-          if (nakamaClient.getConnectionState() === 'connected') {
-            void nakamaClient.joinMatch(activeMatch.matchId, activeMatch.roomCode);
+      // Check for room query intent first
+      const roomCodeFromUrl = parseRoomQueryParam();
+      const roomQueryIntent = nakamaClient.getRoomQueryIntent();
+      
+      // Determine which flow to follow
+      const handleBootFlow = async () => {
+        // Priority: Room query intent from URL (if not already consumed)
+        if (roomCodeFromUrl && (!roomQueryIntent || !roomQueryIntent.consumed)) {
+          console.log('DEBUG App: Room query intent from URL:', roomCodeFromUrl);
+          nakamaClient.setRoomQueryIntent(roomCodeFromUrl);
+          setView('lobby');
+          await nakamaClient.ensureConnected();
+          return;
+        }
+        
+        // Check if we have an active match to resume
+        const activeMatch = nakamaClient.getActiveMatchContext();
+        if (activeMatch?.matchId) {
+          // We have an active match, try to reconnect and resume
+          setView('match');
+          setPendingRoomCode(activeMatch.roomCode);
+          const resumeResult = await nakamaClient.attemptResume();
+          if (resumeResult.success) {
+            addBanner('success', resumeResult.message);
+          } else {
+            addBanner('error', resumeResult.message);
+            // Clear stale context on failure
+            nakamaClient.clearStaleActiveMatch();
+            setView('lobby');
           }
-        });
-      } else {
-        // No active match, go to lobby
-        setView('lobby');
-        // If user already has an identity, try to connect automatically.
-        void nakamaClient.ensureConnected();
-      }
+        } else {
+          // No active match, go to lobby
+          setView('lobby');
+          // If user already has an identity, try to connect automatically.
+          await nakamaClient.ensureConnected();
+        }
+      };
+
+      void handleBootFlow();
     } else {
       setView('nickname_entry');
     }
@@ -125,6 +191,16 @@ function App() {
   const handleJoinMatch = async (matchId: string, roomCode?: string) => {
     setMatchError(null);
     setPendingRoomCode(roomCode || null);
+    
+    // Clear room query intent if this is a successful join
+    if (roomCode) {
+      const roomQueryIntent = nakamaClient.getRoomQueryIntent();
+      if (roomQueryIntent && roomQueryIntent.roomCode === roomCode) {
+        nakamaClient.consumeRoomQueryIntent();
+        clearRoomQueryParam();
+      }
+    }
+    
     const result = await nakamaClient.joinMatch(matchId, roomCode);
 
     if (!result.success) {
@@ -143,6 +219,7 @@ function App() {
     setMatchError(null);
     setPendingRoomCode(null);
     setView('lobby');
+    clearBanners();
   };
 
   const getConnectionMessage = () => {
@@ -159,6 +236,32 @@ function App() {
           ? `Disconnected from multiplayer service (${lastError})`
           : 'Disconnected from multiplayer service';
     }
+  };
+
+  const renderBanners = () => {
+    if (banners.length === 0) return null;
+    
+    return (
+      <div className="app-banners">
+        {banners.map(banner => (
+          <div 
+            key={banner.id} 
+            className={`app-banner app-banner--${banner.type}`}
+            role="alert"
+          >
+            <span className="app-banner__message">{banner.message}</span>
+            <button 
+              type="button" 
+              className="app-banner__dismiss"
+              onClick={() => removeBanner(banner.id)}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   const renderContent = () => {
@@ -263,23 +366,25 @@ function App() {
           <p className="app-brand__subtitle">Server-authoritative multiplayer</p>
         </header>
 
-        <main className="app-stage">
-          <div className="app-card">
-            {view !== 'loading' && (
-              <div className={connectionBannerClass(connectionState)} role="status">
-                {getConnectionMessage()}
-              </div>
-            )}
+      <main className="app-stage">
+        <div className="app-card">
+          {view !== 'loading' && (
+            <div className={connectionBannerClass(connectionState)} role="status">
+              {getConnectionMessage()}
+            </div>
+          )}
 
-            {matchError && view !== 'match' && (
-              <div className="app-connection-banner app-connection-banner--error app-connection-banner--spaced">
-                {matchError}
-              </div>
-            )}
+          {renderBanners()}
 
-            {renderContent()}
-          </div>
-        </main>
+          {matchError && view !== 'match' && (
+            <div className="app-connection-banner app-connection-banner--error app-connection-banner--spaced">
+              {matchError}
+            </div>
+          )}
+
+          {renderContent()}
+        </div>
+      </main>
       </div>
     </div>
   );

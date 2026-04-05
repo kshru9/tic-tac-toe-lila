@@ -7,7 +7,15 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     port: 3000,
-    host: true
+    host: true,
+    proxy: {
+      '/v2': {
+        target: 'https://handsome-courage-production-d68e.up.railway.app',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path
+      }
+    }
   },
   base: mode === 'production' && process.env.VITE_BASE_PATH 
     ? `/${process.env.VITE_BASE_PATH}/`

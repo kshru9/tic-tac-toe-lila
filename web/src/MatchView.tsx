@@ -3,6 +3,8 @@ import {
   PublicMatchState,
   PlayerSymbol,
   ConnectionState,
+  UserFacingMoveRejectReason,
+  UserFacingOutcomeReason,
 } from './types';
 import Board from './Board';
 import { nakamaClient } from './nakamaClient';
@@ -35,11 +37,20 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
 
   const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [lastActionRejection, setLastActionRejection] = useState<string | null>(null);
+  const [pendingMoveIndex, setPendingMoveIndex] = useState<number | null>(null);
 
   // Clear rejection when match state changes significantly (e.g., new match)
   useEffect(() => {
     console.log('DEBUG MatchView: matchId changed or component mounted', matchState.matchId);
     setLastActionRejection(null);
+    
+    // Check for pending move from storage
+    const pendingMove = nakamaClient.getPendingMove();
+    if (pendingMove) {
+      setPendingMoveIndex(pendingMove.index);
+    } else {
+      setPendingMoveIndex(null);
+    }
   }, [matchState.matchId]);
 
   // Log when component mounts/unmounts
@@ -67,7 +78,11 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       console.log('DEBUG MatchView handleMatchEvent:', event.type, event.data);
       if (event.type === 'action_rejected') {
         console.log('DEBUG MatchView: Setting lastActionRejection to:', event.data.message);
-        setLastActionRejection(event.data.message || 'Action rejected');
+        // Map rejection reason to user-friendly message
+        const rejectionMessage = getRejectionMessage(event.data.reason);
+        setLastActionRejection(rejectionMessage);
+        // Clear pending move on rejection
+        setPendingMoveIndex(null);
         // Clear rejection after 3 seconds
         setTimeout(() => {
           console.log('DEBUG MatchView: Clearing lastActionRejection after timeout');
@@ -77,6 +92,13 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
         console.log('DEBUG MatchView: Clearing lastActionRejection on state_sync');
         // Clear any stale rejection errors when we receive fresh state
         setLastActionRejection(null);
+        // Update pending move index from client
+        const pendingMove = nakamaClient.getPendingMove();
+        if (pendingMove) {
+          setPendingMoveIndex(pendingMove.index);
+        } else {
+          setPendingMoveIndex(null);
+        }
       }
     };
 
@@ -168,6 +190,9 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     if (isWaitingForOpponent) return 'Waiting for opponent...';
 
     if (isGameActive) {
+      if (pendingMoveIndex !== null) {
+        return 'Waiting for server confirmation...';
+      }
       if (isYourTurn) return 'Your turn!';
       return "Opponent's turn";
     }
@@ -175,22 +200,65 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     return 'Ready to start';
   }
 
+  // Helper function to get user-friendly rejection messages
+  function getRejectionMessage(reason: UserFacingMoveRejectReason): string {
+    switch (reason) {
+      case 'not_your_turn':
+        return 'Move rejected: not your turn';
+      case 'cell_taken':
+        return 'Move rejected: that cell is already taken';
+      case 'game_not_in_progress':
+        return 'Move rejected: the game is not accepting moves right now';
+      case 'reconnect_in_progress':
+        return 'Move rejected: reconnection in progress';
+      case 'invalid_payload':
+        return 'Move rejected: invalid move';
+      default:
+        return 'Move rejected';
+    }
+  }
+
+  // Helper function to get user-friendly outcome explanations
+  function getOutcomeExplanation(reason: UserFacingOutcomeReason, isWinner: boolean): string {
+    if (isWinner) {
+      switch (reason) {
+        case 'win_row':
+          return 'You won by row!';
+        case 'win_column':
+          return 'You won by column!';
+        case 'win_diagonal':
+          return 'You won by diagonal!';
+        case 'draw_full_board':
+          return 'Draw after 9 moves';
+        case 'disconnect_forfeit':
+          return 'Opponent disconnected and did not return';
+        default:
+          return 'You win!';
+      }
+    } else {
+      switch (reason) {
+        case 'win_row':
+          return 'Opponent won by row';
+        case 'win_column':
+          return 'Opponent won by column';
+        case 'win_diagonal':
+          return 'Opponent won by diagonal';
+        case 'draw_full_board':
+          return 'Draw after 9 moves';
+        case 'disconnect_forfeit':
+          return 'You disconnected and did not return';
+        default:
+          return 'You lose!';
+      }
+    }
+  }
+
   function getStatusSubtext(): string | null {
     if (lastActionRejection) return lastActionRejection;
 
     if (isGameCompleted && matchState.outcomeReason) {
-      switch (matchState.outcomeReason) {
-        case 'win_row':
-          return 'Winning row!';
-        case 'win_column':
-          return 'Winning column!';
-        case 'win_diagonal':
-          return 'Winning diagonal!';
-        case 'draw_full_board':
-          return 'Board is full';
-        case 'disconnect_forfeit':
-          return 'Disconnect forfeit';
-      }
+      const isWinner = matchState.winner === playerSymbol;
+      return getOutcomeExplanation(matchState.outcomeReason, isWinner);
     }
 
     if (isReconnectGrace && matchState.reconnectDeadlineAt) {
@@ -232,15 +300,17 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       playerSymbol: getPlayerSymbol(),
       currentTurn: matchState.currentTurn,
       phase: matchState.phase,
+      pendingMoveIndex,
     });
 
     // Double-check conditions before sending move
-    if (!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected') {
+    if (!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected' || pendingMoveIndex !== null) {
       console.log('DEBUG handleCellClick: Move blocked', {
         isGameActive,
         isYourTurn,
         isSubmittingMove,
         connectionState,
+        pendingMoveIndex,
         reason: !isGameActive
           ? 'Game not active'
           : !isYourTurn
@@ -249,7 +319,9 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
               ? 'Already submitting'
               : connectionState !== 'connected'
                 ? 'Not connected'
-                : 'Unknown',
+                : pendingMoveIndex !== null
+                  ? 'Pending move exists'
+                  : 'Unknown',
       });
       return;
     }
@@ -263,14 +335,17 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
     console.log('DEBUG handleCellClick: Sending move');
     setIsSubmittingMove(true);
     setLastActionRejection(null);
+    setPendingMoveIndex(index); // Set pending move visually
 
     const result = await nakamaClient.sendMoveIntent(index);
 
     if (!result.success) {
       console.log('DEBUG handleCellClick: Move failed', result.message);
       setLastActionRejection(result.message);
+      setPendingMoveIndex(null); // Clear pending move on failure
     } else {
       console.log('DEBUG handleCellClick: Move sent successfully');
+      // Pending move will be cleared by state_sync or action_rejected events
     }
 
     setIsSubmittingMove(false);
@@ -356,9 +431,10 @@ function MatchView({ matchState, connectionState, onLeaveMatch }: MatchViewProps
       <div className="match-board-wrap">
         <Board
           board={matchState.board}
-          disabled={!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected'}
+          disabled={!isGameActive || !isYourTurn || isSubmittingMove || connectionState !== 'connected' || pendingMoveIndex !== null}
           onCellClick={handleCellClick}
           winningLine={winningLine}
+          pendingCellIndex={pendingMoveIndex}
         />
       </div>
 
