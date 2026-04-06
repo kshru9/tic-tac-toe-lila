@@ -1,494 +1,684 @@
-# LILA Multiplayer Tic-Tac-Toe
+# LILA Multiplayer Tic-Tac-Toe (Server-Authoritative Nakama)
 
-A server-authoritative multiplayer Tic-Tac-Toe game built with React + TypeScript + Vite + Nakama.
+A production-minded, server-authoritative multiplayer Tic-Tac-Toe built with **React + TypeScript + Vite** on the frontend and **Nakama** on the backend.
 
-## Overview
+This submission is designed to show more than a working board. It demonstrates authoritative multiplayer state management, rooming/matchmaking, reconnect handling, timed mode, and reviewer-friendly deployment/documentation.
 
-This project implements a real-time multiplayer Tic-Tac-Toe experience with server-authoritative game logic. Players can join games via quick matchmaking, create private rooms, or join by room codes. The game uses Nakama for real-time multiplayer infrastructure with a 30-second reconnect grace period for handling temporary disconnections.
+---
 
-## Assignment-Fit Summary
+## Live Deployment
 
-This implementation satisfies the essential multiplayer game requirements:
+Replace these before submission:
 
-- **Server-authoritative gameplay**: All game logic and move validation happens on the server
-- **Real-time multiplayer**: Live game state synchronization between players
-- **Multiple joining methods**: Quick play, room creation, and room code joining
-- **Room discovery**: Public rooms list for joining open games
-- **Reconnect handling**: 30-second grace period for players to reconnect
-- **Complete game flow**: From lobby to match completion with win/draw/disconnect outcomes
+- **Live Frontend (GitHub Pages):** https://kshru9.github.io/tic-tac-toe-lila/
+- **Deployed Nakama Endpoint (Railway):** https://handsome-courage-production-d68e.up.railway.app/
+- **Demo Video (Loom):** `<PASTE_LOOM_URL_HERE>`
+
+---
+
+## Assignment Coverage
+
+### Core requirements
+- ✅ Responsive UI optimized for mobile devices
+- ✅ Real-time multiplayer game state updates
+- ✅ Player information and match status visibility
+- ✅ Server-authoritative game logic on Nakama
+- ✅ Server-side move validation and cheat prevention
+- ✅ Room creation
+- ✅ Automatic matchmaking / Quick Play
+- ✅ Room discovery and joining
+- ✅ Graceful disconnect / reconnect handling
+- ✅ Public frontend deployment + backend deployment documentation
+
+### Bonus / optional features implemented
+- ✅ Concurrent room isolation through one Nakama match instance per room
+- ✅ Timed mode with **30-second server-authoritative turns**
+- ✅ Automatic timeout forfeit
+- ✅ Mode-aware matchmaking (`classic` vs `timed`)
+- ✅ Persistent leaderboard with wins / losses / draws / streaks
+- ✅ QR-based room sharing
+- ✅ Hidden debug overlay via `?debug=1`
+- ✅ Rematch handshake flow
+- ✅ Refresh-to-resume / session persistence
+
+---
+
+## Screenshots
+
+### Lobby Interface
+![Lobby Interface](web/public/screenshots/lobby.png)
+*Players can enter nicknames and choose between Quick Play, Create Room, Join by Code, or Room Discovery.*
+
+### Classic Match Gameplay
+![Classic Match Gameplay](web/public/screenshots/match-classic.png)
+*Real-time Tic-Tac-Toe gameplay with turn indicators and board state in classic mode.*
+
+### Winning interface 
+![Timed Match Gameplay](web/public/screenshots/match-timed.png)
+*Visual interface showing winning screen*
+
+### Timed Match Gameplay  
+![Timed Match Gameplay](web/public/screenshots/timed.png)
+*Timed mode with server-authoritative 30-second turn deadlines and countdown display.*
+
+### Leaderboard
+![Reconnect Grace Period](web/public/screenshots/reconnect-grace.png)
+*Leaderboard showing the ranked players and their streak*
+
+---
 
 ## Tech Stack
 
-- **Frontend**: React 18 + TypeScript + Vite
-- **Multiplayer Backend**: Nakama with TypeScript runtime modules
-- **Database**: PostgreSQL (required by Nakama)
-- **Local Development**: Docker Compose
-- **Build Tool**: Vite for fast development and optimized production builds
+### Frontend
+- React
+- TypeScript
+- Vite
+- CSS-based responsive/mobile-first UI
 
-**Why this stack was chosen**:
-- React + TypeScript provides a robust, type-safe frontend development experience
-- Nakama offers battle-tested real-time multiplayer infrastructure with matchmaking, rooms, and authoritative gameplay
-- Docker Compose ensures consistent local development environment across machines
-- Vite delivers excellent developer experience with fast hot module replacement
+### Backend
+- Nakama TypeScript runtime
+- Server-authoritative match handler
+- RPC endpoints for rooming, matchmaking, and leaderboard access
+
+### Infrastructure
+- Docker Compose for local development
+- PostgreSQL for Nakama persistence
+- Railway for backend deployment
+- GitHub Pages for frontend deployment
+
+---
 
 ## Repository Structure
 
-```
-lila-tictactoe/
-├── README.md                   # This file
-├── .env.example               # Environment variable template
-├── .gitignore                 # Git ignore rules
-├── docker-compose.yml         # Local development infrastructure
-├── railway.json               # Railway deployment configuration
-├── nakama/                    # Nakama TypeScript runtime
-│   ├── Dockerfile            # Nakama server with runtime build
-│   ├── package.json          # Runtime dependencies
-│   ├── tsconfig.json         # TypeScript configuration
-│   ├── start.sh              # Railway start script
+```text
+tic-tac-toe/
+├── README.md
+├── .env.example
+├── docker-compose.yml
+├── railway.json
+├── DEPLOYMENT-STEPS.md
+├── FLAG-FIX-SUMMARY.md
+├── assets/
+│   ├── screenshot1-lobby.png
+│   ├── screenshot2-gameplay.png
+│   ├── screenshot3-win.png
+│   └── screenshot4-reconnect.png
+├── scripts/
+│   ├── dev.sh
+│   └── deploy.sh
+├── nakama/
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── start.sh
+│   ├── start-railway.sh
 │   └── src/
-│       ├── index.ts          # Runtime module initialization
-│       ├── rpc.ts            # Room creation/joining RPC endpoints
-│       ├── ticTacToeMatch.ts # Authoritative match handler
-│       └── gameRules.ts      # Game logic and validation
-├── web/                       # React frontend
-│   ├── package.json          # Frontend dependencies
-│   ├── tsconfig.json         # TypeScript configuration
-│   ├── vite.config.ts        # Vite configuration
-│   ├── index.html            # HTML entry point
-│   └── src/
-│       ├── main.tsx          # React entry point
-│       ├── App.tsx           # Main application component
-│       ├── nakamaClient.ts   # Nakama client wrapper
-│       ├── types.ts          # Shared TypeScript types
-│       ├── Lobby.tsx         # Lobby interface
-│       ├── MatchView.tsx     # Game board and match interface
-│       └── Board.tsx         # Tic-Tac-Toe board component
-├── .github/workflows/         # GitHub Actions workflows
-│   └── deploy-pages.yml      # GitHub Pages deployment
-└── scripts/
-    ├── dev.sh                # Local development helper
-    └── deploy.sh             # Deployment guidance
+│       ├── index.ts
+│       ├── rpc.ts
+│       ├── gameRules.ts
+│       ├── ticTacToeMatch.ts
+│       └── leaderboard.ts
+└── web/
+    ├── package.json
+    ├── vite.config.ts
+    ├── index.html
+    ├── public/
+    │   └── screenshots/
+    │       ├── lobby.png
+    │       ├── create-room-qr.png
+    │       ├── match-classic.png
+    │       ├── match-timed.png
+    │       ├── reconnect-grace.png
+    │       ├── leaderboard.png
+    │       └── debug-overlay.png
+    └── src/
+        ├── main.tsx
+        ├── App.tsx
+        ├── Lobby.tsx
+        ├── MatchView.tsx
+        ├── LeaderboardView.tsx
+        ├── Board.tsx
+        ├── nakamaClient.ts
+        ├── types.ts
+        └── theme.css
 ```
 
-## Local Setup and Installation
+---
+
+## Architecture Overview
+
+### High-level model
+
+* The **client renders state and sends intents**.
+* The **Nakama match handler owns gameplay truth**.
+* The server validates moves, applies legal state transitions, and broadcasts canonical match state.
+* The client never authoritatively decides wins, turn ownership, timeout outcomes, or reconnect outcomes.
+
+### Why this architecture
+
+This design keeps the trust boundary clear:
+
+* **Frontend responsibilities**
+
+  * nickname entry
+  * authentication/session restore
+  * room/join UX
+  * render authoritative state
+  * send move/rematch intents
+  * show pending / rejected / reconnect / timeout messaging
+
+* **Backend responsibilities**
+
+  * room lifecycle
+  * seat ownership
+  * turn ownership
+  * move validation
+  * win/draw detection
+  * reconnect grace
+  * timed-mode deadlines
+  * timeout and disconnect forfeits
+  * leaderboard persistence
+
+---
+
+## Gameplay and Rooming Flow
+
+### 1. Quick Play
+
+Quick Play attempts to find a compatible public waiting room for the selected mode. If none exists, it creates one.
+
+### 2. Create Room
+
+A player can create a room and receive:
+
+* a 6-character room code
+* a shareable link
+* a QR code for quick join
+
+### 3. Join by Code
+
+Another player can join directly using the room code.
+
+### 4. Room Discovery
+
+Public waiting rooms can be listed and joined from the lobby.
+
+### 5. Deep Link Join
+
+Room links use query parameters like:
+
+```text
+?room=ABC123&mode=classic
+?room=ABC123&mode=timed
+```
+
+### 6. Match Lifecycle
+
+The gameplay model includes these states:
+
+* `waiting_for_opponent`
+* `ready`
+* `in_progress`
+* `reconnect_grace`
+* `completed`
+* `rematch_pending`
+
+---
+
+## Server-Authoritative Design
+
+### Move validation
+
+All moves are validated on the server before they are applied.
+
+Examples of rejection reasons include:
+
+* not your turn
+* cell already occupied
+* game not in progress
+* invalid payload
+* stale state / duplicate action
+* reconnect in progress
+
+The client sends **move intent**, then waits for:
+
+* authoritative state sync, or
+* an action rejection payload
+
+### Protocol hardening
+
+The implementation includes:
+
+* monotonic state versioning
+* action IDs
+* expected version / expected turn checks
+* duplicate/stale action rejection
+
+This makes the multiplayer protocol more reliable under reconnects, retries, and delayed messages.
+
+---
+
+## Timed Mode
+
+Timed mode is fully server-authoritative.
+
+* Turn budget: **30 seconds**
+* The server owns the deadline via an absolute turn timestamp
+* The client renders countdown based on server state
+* If a player does not act before deadline, the server applies **timeout forfeit**
+
+This avoids client-side timer authority and keeps timing fair for both players.
+
+---
+
+## Reconnect, Refresh, and Failure Handling
+
+### Reconnect grace
+
+If a player disconnects during a live match:
+
+* their seat remains reserved temporarily
+* the match enters reconnect grace
+* the opponent sees reconnect state/countdown
+* if the player returns in time, the match resumes
+* if not, the server resolves disconnect forfeit
+
+### Refresh-to-resume
+
+The client persists:
+
+* identity
+* session
+* active match context
+* pending join / room intent
+
+Refreshing the page attempts to resume the active match safely rather than dropping the player back to square one.
+
+### Intentional failure states
+
+The UI is designed to make failure visible rather than silent:
+
+* room not found
+* room full
+* invalid room code
+* stale join link
+* move rejected
+* reconnect in progress
+* timeout / disconnect outcomes
+
+---
+
+## Leaderboard
+
+The leaderboard is an additive bonus feature and is updated only from authoritative match completion.
+
+Tracked statistics include:
+
+* wins
+* losses
+* draws
+* current streak
+* best streak
+
+The leaderboard UI is read-only from the client side. Writes happen on the backend after eligible match completion.
+
+---
+
+## Rematch
+
+After a completed match, players can rematch through a **two-party handshake**:
+
+* one player requests rematch
+* the other player accepts
+* the backend resets board state and starts a fresh match in the same room context
+
+This keeps rematch behavior deterministic and avoids accidental resets.
+
+---
+
+## Debug Overlay
+
+A hidden reviewer/debug feature is available through:
+
+```text
+?debug=1
+```
+
+When enabled during a match, it can expose useful authoritative fields such as:
+
+* match ID
+* room code
+* mode
+* phase
+* version
+* reconnect deadline
+* turn deadline
+* pending move
+* stats commit state
+
+This is useful for demos and debugging without requiring a separate debug RPC surface.
+
+---
+
+## Flow Diagram
+
+```mermaid
+sequenceDiagram
+  participant A as Player A (Web)
+  participant B as Player B (Web)
+  participant NK as Nakama (RPC + Match)
+  participant DB as Postgres
+
+  A->>NK: quick_play / create_room / join_room
+  NK-->>A: matchId, roomCode, mode
+  A->>NK: joinMatch(matchId, nickname)
+  B->>NK: joinMatch(matchId, nickname)
+  NK-->>A: STATE_SYNC
+  NK-->>B: STATE_SYNC
+
+  A->>NK: MOVE_INTENT(actionId, expectedVersion, expectedTurn, cellIndex)
+  NK->>NK: validate + apply
+  alt Accepted
+    NK-->>A: STATE_SYNC
+    NK-->>B: STATE_SYNC
+  else Rejected
+    NK-->>A: ACTION_REJECTED
+  end
+
+  opt Completion
+    NK->>DB: leaderboard persistence
+  end
+```
+
+---
+
+## RPC Endpoints
+
+The backend registers these RPCs:
+
+* `health`
+* `create_room`
+* `join_room`
+* `list_rooms`
+* `quick_play`
+* `get_leaderboard`
+
+---
+
+## Match Opcodes
+
+The gameplay protocol uses these opcodes:
+
+* `1` — `MOVE_INTENT`
+* `2` — `STATE_SYNC`
+* `3` — `ACTION_REJECTED`
+* `4` — `REMATCH_REQUEST`
+* `5` — `REMATCH_ACCEPT`
+
+---
+
+## Key Code References
+
+### Backend
+
+* `nakama/src/index.ts` — runtime initialization, RPC registration, match registration
+* `nakama/src/rpc.ts` — room creation, room join, room listing, quick play, leaderboard read
+* `nakama/src/gameRules.ts` — pure board/game outcome logic
+* `nakama/src/ticTacToeMatch.ts` — authoritative match loop, reconnect grace, timer handling, rematch flow
+* `nakama/src/leaderboard.ts` — leaderboard persistence and ranking
+
+### Frontend
+
+* `web/src/App.tsx` — app bootstrap, deep-link handling, top-level state/view transitions
+* `web/src/Lobby.tsx` — lobby actions, mode selection, QR flow, room discovery
+* `web/src/MatchView.tsx` — match UI, timer rendering, reconnect status, rejection messages, debug overlay
+* `web/src/LeaderboardView.tsx` — leaderboard screen
+* `web/src/nakamaClient.ts` — client auth/session restore, RPC calls, socket lifecycle, resume logic
+* `web/src/types.ts` — shared protocol/types
+
+---
+
+## Local Setup
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Node.js 18+ (for local frontend development)
-- Git
+* Docker
+* Docker Compose
+* Node.js 18+
+* Git
 
-### Quick Start
-
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd tic-tac-toe
-   ```
-
-2. **Set up environment variables**:
-   ```bash
-   cp .env.example .env
-   ```
-   Review the `.env` file and update values if needed for your local setup.
-
-3. **Build the Nakama runtime module** (required before starting):
-   ```bash
-   cd nakama
-   npm install
-   npm run build
-   cd ..
-   ```
-
-4. **Start the local infrastructure**:
-   ```bash
-   docker-compose up
-   ```
-   This starts:
-   - PostgreSQL database (port 5432)
-   - Nakama server with TypeScript runtime (HTTP API: port 7350, WebSocket: port 7350)
-
-5. **In a separate terminal, start the frontend**:
-   ```bash
-   cd web
-   npm install
-   npm run dev
-   ```
-
-6. **Open your browser** to the URL shown by Vite (typically `http://localhost:5173`).
-
-### Alternative: Use the development helper script
+### 1. Clone and prepare environment
 
 ```bash
-./scripts/dev.sh
+git clone https://github.com/kshru9/tic-tac-toe-lila.git
+cd tic-tac-toe-lila
+cp .env.example .env
 ```
 
-This script checks prerequisites, creates `.env` if missing, and starts the Docker Compose services.
+### 2. Build the Nakama runtime
 
-## Environment Variables and Configuration
+```bash
+cd nakama
+npm install
+npm run build
+cd ..
+```
 
-See `.env.example` for the complete template. The frontend reads from `VITE_*` prefixed variables:
+### 3. Start local backend services
 
-- `VITE_NAKAMA_HOST`: Nakama server hostname (default: `localhost` for local development)
-- `VITE_NAKAMA_PORT`: Nakama HTTP API port (default: `7350`)
-- `VITE_NAKAMA_SERVER_KEY`: Server authentication key (default: `defaultkey` for local)
-- `VITE_NAKAMA_USE_SSL`: Whether to use SSL (default: `false` for local)
-- `VITE_NAKAMA_WEBSOCKET_PORT`: WebSocket port (default: `7350`)
-- `VITE_APP_TITLE`: Application title shown in the UI
+```bash
+docker-compose up
+```
 
-**Important**: For production deployment, use secure values for the server key and enable SSL.
+This starts:
 
-## Architecture and Design Decisions
+* PostgreSQL
+* Nakama
 
-### Server-Authoritative Gameplay
+### 4. Start the frontend
 
-All game logic executes on the Nakama server:
-- Move validation (cell availability, turn order)
-- Win/draw detection (rows, columns, diagonals, full board)
-- State synchronization between players
-- Disconnect/reconnect handling
+In another terminal:
 
-The frontend acts as a renderer and intent sender:
-- Displays the current game state
-- Sends move intents to the server
-- Shows validation errors from the server
-- Handles real-time state updates
+```bash
+cd web
+npm install
+npm run dev
+```
 
-### Rooming and Matchmaking Flow
+### Local URLs
 
-1. **Quick Play**: Automatically matches players into available public rooms
-2. **Create Room**: Generates a 6-character room code for private games
-3. **Join by Code**: Join existing rooms using the room code
-4. **Room Discovery**: Browse and join public waiting rooms
+* **Frontend:** `[private-url-redacted]`
+* **Nakama HTTP:** `[private-url-redacted]`
+* **Nakama WebSocket:** `ws://[private-host-redacted]:7350`
+* **PostgreSQL:** `[private-host-redacted]:5432`
 
-### Real-Time State Sync
+---
 
-- WebSocket connection maintains live game state
-- Server broadcasts state changes to all connected players
-- Frontend updates UI immediately on state changes
-- Automatic reconnection attempts on network issues
+## Environment Variables
 
-### Disconnect/Reconnect Grace Handling
+### Frontend
 
-- 30-second grace period for players to reconnect
-- Game enters `reconnect_grace` phase when a player disconnects
-- If player reconnects within grace period, game resumes
-- If grace period expires, game ends with disconnect forfeit
-- Opponent sees reconnect countdown during grace period
+| Variable                     |        Required | Purpose                                            |
+| ---------------------------- | --------------: | -------------------------------------------------- |
+| `VITE_NAKAMA_HOST`           |             Yes | Nakama host for HTTP / socket connection           |
+| `VITE_NAKAMA_PORT`           |              No | Nakama port, defaults to `7350`                    |
+| `VITE_NAKAMA_SERVER_KEY`     |             Yes | Must match backend server key                      |
+| `VITE_NAKAMA_USE_SSL`        |             Yes | `false` locally, `true` in production              |
+| `VITE_NAKAMA_WEBSOCKET_PORT` |              No | Optional; usually same as HTTP port                |
+| `VITE_BASE_PATH`             | Production only | Needed for GitHub Pages project path               |
+| `VITE_APP_TITLE`             |              No | Present in env template, not currently used by app |
 
-## Gameplay / Rooming Behavior
+### Backend / deployment
 
-### Quick Play
-- Automatically finds an available public room
-- Joins existing room or creates new one if none available
-- Starts immediately when second player joins
+| Variable              |                       Required | Purpose                                            |
+| --------------------- | -----------------------------: | -------------------------------------------------- |
+| `DATABASE_URL`        |                           Yes* | Primary Railway/Postgres connection input          |
+| `NAKAMA_RUNTIME_PATH` |                            Yes | Path to compiled runtime modules                   |
+| `NAKAMA_SERVER_KEY`   |                            Yes | Must match frontend key                            |
+| `NAKAMA_CORS_ORIGIN`  | Recommended in deployment docs | Configure CORS appropriately for deployed frontend |
 
-### Create Room
-- Generates a unique 6-character alphanumeric room code
-- Can be set as private (not listed in public rooms)
-- Share the code with friends to join
+* Railway may provide either `DATABASE_URL` or equivalent `PG*` variables depending on setup.
 
-### Join by Code
-- Enter a 6-character room code to join specific room
-- Validates room exists and has available slots
-- Joins as spectator if game is already in progress
+---
 
-### Room Discovery
-- Lists public rooms waiting for players
-- Shows room code, player count, and creation time
-- One-click join for open rooms
+## How to Test Multiplayer
 
-### X/O Assignment and Turn Handling
-- First player to join becomes X (goes first)
-- Second player becomes O
-- Turns alternate after each valid move
-- Server validates turn order and move legality
+Use two browser contexts:
 
-### Win/Draw/Disconnect Outcomes
-- **Win**: Three in a row (horizontal, vertical, or diagonal)
-- **Draw**: All cells filled with no winner
-- **Disconnect Forfeit**: Player fails to reconnect within 30-second grace period
+* one normal window
+* one incognito window
 
-## Reconnect/Disconnect Behavior
+Recommended test checklist:
 
-The game implements a practical reconnect system:
-
-1. **Grace Period**: 30 seconds to reconnect after disconnection
-2. **State Preservation**: Game state is preserved during grace period
-3. **Visual Feedback**: Opponent sees reconnect countdown
-4. **Automatic Forfeit**: If grace period expires, disconnected player forfeits
-5. **Resume on Reconnect**: If player reconnects in time, game continues from saved state
+1. **Quick Play**
 
-This balances gameplay integrity with real-world network reliability.
+   * Player A joins Quick Play
+   * Player B joins Quick Play
+   * Verify both enter the same match
 
-## How to Test Multiplayer Locally
+2. **Create private room**
 
-### Two-Browser / Two-Device Flow
-
-1. **Start the application** following the Local Setup instructions above.
-
-2. **Player 1 (Browser/Device 1)**:
-   - Enter a nickname
-   - Choose "Create Room" or "Quick Play"
-   - If creating room, note the room code
-
-3. **Player 2 (Browser/Device 2)**:
-   - Enter a different nickname
-   - Choose "Join by Code" (enter room code from Player 1) or "Quick Play"
-   - Alternatively, use "Room Discovery" to find and join Player 1's room
-
-4. **Test gameplay**:
-   - Take turns making moves
-   - Verify move validation (can't play on occupied cells, must wait your turn)
-   - Test win conditions (get three in a row)
-   - Test draw condition (fill board with no winner)
-
-5. **Test disconnect/reconnect**:
-   - Player 1: Close browser tab or disconnect network
-   - Player 2: Should see "Opponent reconnecting..." with 30-second countdown
-   - Player 1: Reopen application within 30 seconds
-   - Verify game resumes from saved state
-
-### Quick Play Flow Test
-1. Both players choose "Quick Play"
-2. System should match them into the same room
-3. Game starts automatically when both are present
-
-### Room Discovery Flow Test
-1. Player 1 creates a public room
-2. Player 2 uses "Room Discovery" to find and join the room
-3. Game starts when Player 2 joins
-
-## Deployment Process (Railway + GitHub Pages)
-
-### Locked Provider Choice
-
-This repository is configured for deployment to:
-
-1. **Frontend**: GitHub Pages (static hosting)
-2. **Backend**: Railway (Nakama server with PostgreSQL)
-3. **Database**: Railway PostgreSQL
-
-### Production Requirements
-
-**Browser-safe production deployment requires:**
-- HTTPS/WSS connections (TLS certificates) - Provided automatically by Railway and GitHub Pages
-- CORS configuration on Nakama for your GitHub Pages domain
-- Secure server key (not `defaultkey`)
-- Railway public networking for Nakama HTTPS/WSS exposure
-
-**Railway provides automatic TLS certificates and public networking.**
-
-### Railway + GitHub Pages Deployment Steps
-
-#### 1. Deploy Nakama Backend to Railway
-
-**Prerequisites:**
-- Railway account
-- GitHub repository connected to Railway
-
-**Steps:**
-1. Create a new Railway project
-2. Add a PostgreSQL service (Railway will provide `DATABASE_URL`)
-3. Add a new service from GitHub repository
-   - Source: Your GitHub repository
-   - **Important**: After adding, set **Root Directory** to `/nakama`
-   - Build Command: Auto-detected from Dockerfile
-   - Start Command: Auto-detected from start.sh
-
-**Note**: If Railway shows "Railpack could not determine how to build the app":
-- The repository includes `railway.json` to specify Dockerfile location
-- Also includes `nakama/start.sh` for Railway compatibility
-- Set Root Directory to `/nakama` in service settings
-
-4. Configure environment variables (CRITICAL):
-   - **Delete all existing variables first**
-   - Add ONLY these to Nakama service:
-     - `DATABASE_URL`: `postgresql://postgres:gIvfgULhzuPvvAbVfsUMFinQCmmixRrB@postgres.railway.internal:5432/railway`
-     - `NAKAMA_RUNTIME_PATH`: `/nakama/data/modules`
-     - `NAKAMA_SERVER_KEY`: Generate secure key (e.g., `openssl rand -base64 32`)
-   - **Do NOT add `VITE_*` variables here** (they go in GitHub Actions)
-5. Railway will automatically:
-   - Build the Docker image with embedded runtime module
-   - Deploy with public HTTPS domain
-   - Provide automatic TLS certificates
-
-#### 2. Deploy Frontend to GitHub Pages
-
-**Prerequisites:**
-- GitHub repository
-
-**Steps:**
-1. Push repository changes to GitHub
-2. **The GitHub Actions workflow will automatically:**
-   - Enable GitHub Pages if not already enabled
-   - Build frontend with correct base path
-   - Deploy to GitHub Pages
-3. Set repository Actions variables (required before workflow runs):
-   - Go to repository → Settings → Secrets and variables → Actions
-   - Add variables:
-     - `VITE_NAKAMA_HOST`: Your Railway public domain
-     - `VITE_NAKAMA_USE_SSL`: `true`
-     - `VITE_NAKAMA_SERVER_KEY`: Same secure key used in Railway
-     - `VITE_BASE_PATH`: Repository name (e.g., `tic-tac-toe`)
-4. After deployment, get your public URL:
-   - Go to repository → Settings → Pages
-   - URL: `https://username.github.io/repo-name/`
-
-#### 3. Connect Frontend to Backend
-
-1. Update CORS in Railway Nakama service:
-   - Set `NAKAMA_CORS_ORIGIN` to your GitHub Pages URL
-2. Test connection:
-   - Open GitHub Pages URL
-   - Verify connection status shows "connected"
-   - Create/join a game room
-
-### Environment Configuration
-
-| Environment | Nakama Host | SSL | Server Key | Base Path | Purpose |
-|-------------|-------------|-----|------------|-----------|---------|
-| Local | `[private-host-redacted]` | `false` | `defaultkey` | `/` | Development |
-| Railway + GitHub Pages | Railway domain | `true` | Secure key | `/repo-name/` | Production |
-
-## Submission-Time Values to Provide
-
-**Before submission, fill in these values:**
-
-- **Public Frontend URL**: `[TO BE PROVIDED BEFORE SUBMISSION]`
-- **Deployed Nakama Endpoint**: `[TO BE PROVIDED BEFORE SUBMISSION]`
-
-**Environment notes for reviewers:**
-- Local development uses the values in `.env.example`
-- Production deployment requires secure, non-default values
-- The frontend requires `VITE_NAKAMA_HOST` to be explicitly set (no fallback)
-- The application has not been deployed to production in this workflow
-## Deployment Split
-
-This application requires two deployment targets:
-
-1. **Frontend**: Static web host (Vercel, Netlify, GitHub Pages, S3 + CloudFront, etc.)
-2. **Nakama Server**: Cloud host with PostgreSQL (AWS, GCP, Azure, DigitalOcean, etc.)
-
-### Configuration Steps
-
-1. **Deploy Nakama Server**:
-   - Set up PostgreSQL database
-   - Build the TypeScript runtime module: 
-> nakama-runtime@1.0.0 build
-> tsc -p tsconfig.json
-   - Deploy Nakama with the built runtime module
-   - Configure TLS/SSL certificates (requires reverse proxy like nginx, traefik, or cloud provider TLS)
-   - Configure CORS to allow your frontend domain
-   - Set secure server key (not `defaultkey`)
-
-2. **Build and Deploy Frontend**:
-   ```bash
-   cd web
-   npm run build
-   ```
-   - Upload the `dist/` folder to your static host
-   - Configure environment variables for production
-
-3. **Update Environment Variables**:
-   - Set  to your deployed Nakama server hostname (REQUIRED - no fallback)
-   - Set  to  (requires TLS termination)
-   - Use your production server key (not )
-   - Configure CORS on Nakama for your frontend domain
-   - Rebuild frontend with updated environment
-
-### Local vs Deployed Environment Differences
-
-| Environment | Nakama Host | SSL | Server Key | Purpose |
-|-------------|-------------|-----|------------|---------|
-| Local | `localhost` | `false` | `defaultkey` | Development |
-| Production | Your domain | `true` | Secure key | Live gameplay |
-
-## Submission-Time Values to Provide
-
-**Before submission, fill in these values:**
-
-- **Public Frontend URL**: `[TO BE PROVIDED BEFORE SUBMISSION]`
-- **Deployed Nakama Endpoint**: `[TO BE PROVIDED BEFORE SUBMISSION]`
-
-**Environment notes for reviewers**:
-- Local development uses the values in `.env.example`
-- Production deployment would use secure, non-default values
-- The application has not been deployed to production in this workflow
-
-## Implemented Scope vs Later Optional Scope
-
-### Implemented in Beta 1 / Gamma 3
-
-✅ **Core Gameplay**
-- Server-authoritative Tic-Tac-Toe logic
-- Real-time multiplayer with WebSockets
-- Complete win/draw detection
-- Turn validation and enforcement
-
-✅ **Room System**
-- Quick play matchmaking
-- Room creation with unique codes
-- Join by room code
-- Public room discovery
-- Private/public room options
-
-✅ **Player Management**
-- Nickname-based identity
-- Device persistence
-- Session management
-- Automatic reconnection
-
-✅ **Reconnect Handling**
-- 30-second grace period
-- State preservation during disconnect
-- Visual reconnect feedback
-- Automatic forfeit on timeout
-
-✅ **Frontend Experience**
-- Clean, responsive UI
-- Real-time state updates
-- Action validation feedback
-- Connection status indicators
-
-### Not Yet Implemented (Future/Optional Scope)
-
-❌ **Timed Mode** - No move time limits
-❌ **Leaderboard** - No scoring or ranking system  
-❌ **Rematch** - No automatic rematch after game ends
-❌ **Requeue** - No automatic return to matchmaking
-❌ **QR Join** - No QR code generation for room joining
-❌ **Debug Overlay** - No developer debugging tools
-❌ **Spectator Mode** - No dedicated spectator interface
-❌ **Chat** - No in-game text chat
-
-These are potential enhancements for future iterations but are not required for the core multiplayer assignment.
-
-## Honest Verification Status
-
-### Statically Verified ✅
-
-- **TypeScript compilation**: All `.ts` and `.tsx` files compile without errors
-- **Frontend build**: `npm run build` succeeds with Vite
-- **Code structure**: Repository follows consistent patterns and type safety
-- **Environment configuration**: `.env.example` provides complete template
-
-### Not Runtime-Verified in This Workflow
-
-- **Live multiplayer testing**: Gameplay has not been tested with actual players in this workflow
-- **Production deployment**: Application has not been deployed to a public URL
-- **Cross-browser compatibility**: Not tested across different browsers/devices
-- **Load testing**: Not tested with multiple concurrent games
-
-**Important**: This implementation is code-complete and ready for deployment, but runtime multiplayer validation would be the next step before production use.
-
-## Development Scripts
-
-- `scripts/dev.sh` - Helper script for local development workflow
-- `scripts/deploy.sh` - Deployment guidance and helper (not a full automation script)
+   * Create room
+   * copy room code / share link
+   * verify room code is visible
+
+3. **Join by code**
+
+   * Enter valid code in second window
+   * verify match starts
+
+4. **Room discovery**
+
+   * Create a public room
+   * refresh room list
+   * join from second client
+
+5. **Authoritative rejection**
+
+   * attempt move out of turn
+   * click an occupied cell
+   * verify rejection messaging
+
+6. **Reconnect grace**
+
+   * disconnect one player mid-match
+   * verify reconnect state/countdown
+   * reconnect within grace window
+
+7. **Refresh-to-resume**
+
+   * refresh during active match
+   * verify resume flow attempts to restore state
+
+8. **Timed mode**
+
+   * select `timed`
+   * verify countdown appears
+   * let timer expire
+   * verify timeout forfeit result
+
+9. **Rematch**
+
+   * finish a match
+   * request rematch from one side
+   * accept from the other
+   * verify board resets
+
+10. **Leaderboard**
+
+* finish match
+* open leaderboard
+* verify updated stats
+
+11. **Debug overlay**
+
+* add `?debug=1`
+* verify debug panel appears during match
+
+---
+
+## Deployment
+
+### Backend: Railway
+
+The repository is configured to deploy Nakama to Railway using:
+
+* `railway.json`
+* `nakama/Dockerfile`
+* `nakama/start-railway.sh`
+
+Expected deployment shape:
+
+* Railway service root directory: `/nakama`
+* PostgreSQL attached to Railway project
+* environment variables configured for database + server key + runtime path
+* HTTPS/WSS endpoint exposed publicly
+
+### Frontend: GitHub Pages
+
+The repository includes a GitHub Actions workflow for Pages deployment:
+
+* `.github/workflows/deploy-pages.yml`
+
+Important notes:
+
+* the production base path is derived from repo name via `VITE_BASE_PATH`
+* the primary intended Pages workflow is `deploy-pages.yml`
+* `.github/workflows/static.yml` exists but appears to be a conflicting/duplicate static workflow and should not be the primary deployment path
+
+### Health check
+
+The repo includes:
+
+* a custom `health` RPC in the Nakama runtime
+* a Railway healthcheck path configured at `/health`
+
+For submission wording, it is safest to describe `/health` as the configured deployment healthcheck path and verify the exact deployed response contract in the live environment.
+
+---
+
+## Submission Checklist
+
+Before submitting:
+
+* add live frontend URL
+* add live Nakama endpoint
+* add Loom demo link
+* add screenshots
+* confirm production frontend connects successfully to deployed Nakama
+* confirm CORS is configured correctly for the deployed frontend domain
+* verify health check in deployed environment
+* verify HTTPS/WSS connectivity
+* re-test timed mode, reconnect grace, leaderboard update, and rematch in the live environment
+
+---
+
+## Known Notes / Careful Wording
+
+* The code/config inspection indicates timed mode, leaderboard, rematch, QR join, and debug overlay are implemented, even though the older README underreported them.
+* `VITE_NAKAMA_HOST` should be set explicitly; the client should not rely on guessing production backend location.
+* `NAKAMA_SERVER_KEY` should be changed from insecure defaults in real deployment.
+* `VITE_NAKAMA_WEBSOCKET_PORT` exists in config but may not materially differ from the main Nakama port in practice.
+* CORS setup should be verified against the actual deployed frontend origin.
+* Production deployment status, exact public URLs, and exact `/health` response shape should be manually confirmed before final submission/demo.
+
+---
+
+## Why this submission is structured this way
+
+This project was intentionally built as a compact but production-minded multiplayer system:
+
+* lean repo shape
+* clear trust boundary
+* explicit match lifecycle
+* reconnect-aware UX
+* mode-aware matchmaking
+* additive bonus features without destabilizing the core
+
+The goal is not to over-engineer Tic-Tac-Toe. The goal is to show solid multiplayer/backend thinking, good product judgment, and end-to-end ownership.
+
+---
 
 ## License
 
-MIT# ticU
-# ticU
-# ticU
+MIT

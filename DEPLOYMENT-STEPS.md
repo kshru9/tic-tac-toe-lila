@@ -15,7 +15,7 @@
 #### Step 2: Add PostgreSQL
 1. In project → "+ New" → PostgreSQL
 2. Railway creates database automatically
-3. **Password provided**: `gIvfgULhzuPvvAbVfsUMFinQCmmixRrB`
+3. **Password provided**: ``
 
 #### Step 3: Add Nakama Service (CRITICAL)
 1. "+ New" → GitHub Repo → Select `tic-tac-toe`
