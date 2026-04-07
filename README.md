@@ -12,7 +12,7 @@ Replace these before submission:
 
 - **Live Frontend (GitHub Pages):** https://kshru9.github.io/tic-tac-toe-lila/
 - **Deployed Nakama Endpoint (Railway):** https://handsome-courage-production-d68e.up.railway.app/
-- **Demo Video (Loom):** `<PASTE_LOOM_URL_HERE>`
+- **Demo Video (Loom):** https://www.loom.com/share/742fc09035ff42299802a0f32351d3ba
 
 ---
 
