@@ -451,6 +451,18 @@ class NakamaClient {
     }
   }
 
+  /** Repair wire payloads where currentTurn is missing/null during active play (e.g. JSON omitted undefined). */
+  private normalizeIncomingMatchState(raw: unknown): PublicMatchState {
+    const o = raw as Record<string, unknown>;
+    const phase = o.phase;
+    const winner = o.winner;
+    let currentTurn = (o.currentTurn ?? o.current_turn) as PublicMatchState['currentTurn'] | undefined;
+    if (phase === 'in_progress' && winner == null && (currentTurn === null || currentTurn === undefined)) {
+      currentTurn = 'X';
+    }
+    return { ...o, currentTurn } as PublicMatchState;
+  }
+
   private handleMatchData(matchData: any): void {
     // matchData should have match_id, op_code, data properties from Nakama JS SDK
     const matchId = matchData.match_id;
@@ -502,7 +514,7 @@ class NakamaClient {
         case OP_CODE_STATE_SYNC:
           console.log('DEBUG handleMatchData: STATE_SYNC for match', matchId, 'state:', parsedData);
           console.log('DEBUG handleMatchData: Mode=', parsedData.mode, 'turnDeadlineAt=', parsedData.turnDeadlineAt, 'remainingTurnMs=', parsedData.remainingTurnMs);
-          const matchState = parsedData as PublicMatchState;
+          const matchState = this.normalizeIncomingMatchState(parsedData);
           this.latestMatchState = matchState;
           this.updateMatchContextFromState(matchState);
           
@@ -529,8 +541,9 @@ class NakamaClient {
           // Update latest match state from rejection payload if provided
           if (rejectPayload.state) {
             console.log('DEBUG handleMatchData: Updating state from rejection payload');
-            this.latestMatchState = rejectPayload.state;
-            this.updateMatchContextFromState(rejectPayload.state);
+            const normalized = this.normalizeIncomingMatchState(rejectPayload.state);
+            this.latestMatchState = normalized;
+            this.updateMatchContextFromState(normalized);
           }
           
           // Clear pending move on rejection
@@ -878,13 +891,13 @@ class NakamaClient {
         roomCode 
       });
       
-      // Determine player symbol from match presence
-      // playerSymbol will be set from state_sync
-      // We'll determine symbol from state_sync after joining.
+      // Preserve symbol/room code if state_sync arrived before joinMatch (socket race).
+      const sameMatch = this.activeMatchContext?.matchId === match.match_id;
+      const preserved = sameMatch ? this.activeMatchContext : null;
       this.activeMatchContext = {
         matchId: match.match_id,
-        roomCode: roomCode || '', // Will be updated from state_sync if empty
-        playerSymbol: null
+        roomCode: roomCode || preserved?.roomCode || '',
+        playerSymbol: preserved?.playerSymbol ?? null
       };
       // Save to storage for reconnect/resume
       saveActiveMatch(this.activeMatchContext);

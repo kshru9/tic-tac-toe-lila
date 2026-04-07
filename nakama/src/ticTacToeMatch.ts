@@ -188,6 +188,11 @@ function decodeArrayBufferToString(arrayBuffer: ArrayBuffer): string {
  * Serialize internal state to public canonical state
  */
 function getPublicState(state: TicTacToeMatchState): any {
+  // JSON.stringify omits `undefined` keys; clients must always see a turn while in play.
+  let currentTurn: 'X' | 'O' | null | undefined = state.currentTurn;
+  if (state.phase === 'in_progress' && state.winner == null) {
+    currentTurn = currentTurn ?? 'X';
+  }
   return {
     matchId: state.matchId,
     roomCode: state.roomCode,
@@ -196,7 +201,7 @@ function getPublicState(state: TicTacToeMatchState): any {
     board: state.board,
     playerX: state.playerX,
     playerO: state.playerO,
-    currentTurn: state.currentTurn,
+    currentTurn,
     winner: state.winner,
     outcomeReason: state.outcomeReason,
     moveCount: state.moveCount,
@@ -716,9 +721,10 @@ var matchJoin = function matchJoin(
     state.phase = 'waiting_for_opponent';
   } else if (playerCount === 2) {
     if (state.phase === 'waiting_for_opponent') {
-      state.phase = 'ready';
       // Immediately transition to in_progress for simplicity
       state.phase = 'in_progress';
+      // X always opens; repair any missing/undefined turn from persisted or edge-case state
+      state.currentTurn = 'X';
       // Set initial turn deadline for timed mode
       setTurnDeadline(state);
       bumpVersion(state);
